@@ -1368,6 +1368,10 @@ export default function Chat() {
         delete copy[messageId];
         return copy;
       });
+      // Clean up decryption queue for deleted messages
+      if (decryptQueueRef.current[messageId]) {
+        delete decryptQueueRef.current[messageId];
+      }
     });
 
 
@@ -1381,12 +1385,20 @@ export default function Chat() {
         return { ...prev, [conversationId]: next };
       });
 
+      // CRITICAL FIX: Clear the decryption queue flag for this message so it can be re-decrypted.
+      // Without this, the decryption effect would skip the edited message because it thinks
+      // it was already processed.
+      if (decryptQueueRef.current[message.id]) {
+        delete decryptQueueRef.current[message.id];
+      }
+
       setDecryptedMessages((prev) => {
         const copy = { ...prev };
         const raw = message.text || "";
         try {
           const parsed = JSON.parse(raw);
           if (parsed && parsed.e2ee) {
+            // Remove old decrypted text so the effect will re-decrypt it
             delete copy[message.id];
           } else {
             copy[message.id] = raw;
@@ -2722,13 +2734,34 @@ export default function Chat() {
                 if (!localPair && myKeyPair) localPair = myKeyPair;
 
                 if (localPair && remoteJwk) {
-                  const key = await deriveDmAesKey({
-                    localKid,
-                    localKeyPair: localPair,
-                    remoteJwk,
-                  });
-                  if (key) {
-                    try { plaintext = await E2EE.decryptDmMessage(parsed, key); } catch { }
+                  try {
+                    const key = await deriveDmAesKey({
+                      localKid,
+                      localKeyPair: localPair,
+                      remoteJwk,
+                    });
+                    if (key) {
+                      plaintext = await E2EE.decryptDmMessage(parsed, key);
+                    }
+                  } catch {
+                    // Decryption failed, plaintext stays as original encrypted text
+                  }
+                }
+                // If no remoteJwk in message, try fetching from server (legacy messages)
+                if (plaintext === msg.text && !remoteJwk && localPair) {
+                  const otherId = conv.memberIds?.find(id => id !== currentUser.id);
+                  if (otherId) {
+                    try {
+                      const fetchedJwk = await getUserPublicKeyJwk(otherId);
+                      if (fetchedJwk) {
+                        const key = await deriveDmKeyFromPublicJwk(localPair.privateKey, fetchedJwk);
+                        if (key) {
+                          plaintext = await E2EE.decryptDmMessage(parsed, key);
+                        }
+                      }
+                    } catch {
+                      // Fallback decryption failed
+                    }
                   }
                 }
               } else if (conv.type === "group") {
@@ -2791,7 +2824,9 @@ export default function Chat() {
     currentUser,
     myKeyPair,
     deriveDmAesKey,
-    getLocalKeyPairForKid
+    getLocalKeyPairForKid,
+    getUserPublicKeyJwk,
+    deriveDmKeyFromPublicJwk
   ]);
 
   const handleMediaScroll = useCallback((e) => {
@@ -2841,16 +2876,20 @@ export default function Chat() {
 
           let localPair = await getLocalKeyPairForKid(localKid);
 
-          // CRITICAL FIX: Fallback to current session key if specific key not found or not specified.
-          // This handles cases where older messages didn't tag key IDs, or simply use the current key.
+          // Only fall back to current session key if no specific key ID was provided (legacy messages).
+          // If a key ID was specified but not found, we still try current key as last resort,
+          // but this may fail if keys have rotated.
           if (!localPair && myKeyPair) {
             localPair = myKeyPair;
           }
 
-          if (!localPair) throw new Error("Missing local keypair for message");
+          if (!localPair) {
+            return null; // Return null instead of throwing to allow fallback
+          }
 
-          // Try cache first
+          // Try decryption with remote JWK from message (most reliable source)
           if (remoteJwk) {
+            // Try cached derived key first
             try {
               const cachedKey = await deriveDmAesKey({
                 localKid,
@@ -2862,28 +2901,38 @@ export default function Chat() {
                 return await E2EE.decryptDmMessage(parsed, cachedKey);
               }
             } catch (e) {
-              // ignore and try fresh derive
+              // Cached key derivation or decryption failed, try fresh derive
             }
 
-            // Fresh derive from JWK
-            const freshKey = await deriveDmKeyFromPublicJwk(localPair.privateKey, remoteJwk);
-            if (freshKey) {
-              return await E2EE.decryptDmMessage(parsed, freshKey);
-            }
-          }
-
-          // Fallback: if we have remoteId but no JWK in message, fetch it
-          if (remoteId) {
-            const fetchedJwk = await getUserPublicKeyJwk(remoteId, { force: forceRemote });
-            if (fetchedJwk) {
-              const freshKey = await deriveDmKeyFromPublicJwk(localPair.privateKey, fetchedJwk);
+            // Fresh derive from JWK in message
+            try {
+              const freshKey = await deriveDmKeyFromPublicJwk(localPair.privateKey, remoteJwk);
               if (freshKey) {
                 return await E2EE.decryptDmMessage(parsed, freshKey);
               }
+            } catch (e) {
+              // Fresh decryption failed, continue to fallback
             }
           }
 
-          throw new Error("Failed to derive DM key");
+          // Fallback: if we have remoteId but no JWK in message (or JWK-based decryption failed), 
+          // try fetching current public key from server. This works for legacy messages or when
+          // the embedded key doesn't match (though it may fail if keys have rotated since sending).
+          if (remoteId) {
+            try {
+              const fetchedJwk = await getUserPublicKeyJwk(remoteId, { force: forceRemote });
+              if (fetchedJwk) {
+                const freshKey = await deriveDmKeyFromPublicJwk(localPair.privateKey, fetchedJwk);
+                if (freshKey) {
+                  return await E2EE.decryptDmMessage(parsed, freshKey);
+                }
+              }
+            } catch (e) {
+              // Fetched key decryption failed
+            }
+          }
+
+          return null; // Return null to allow caller to try other fallback methods
         };
 
         if (conv.type === "dm") {
@@ -2943,10 +2992,17 @@ export default function Chat() {
             let decryptedText = null;
 
             if (conv.type === "dm") {
+              // Try decryption using key metadata from the message
               if (parsed.senderKeyId || parsed.recipientKeyId || parsed.senderPublicKey || parsed.recipientPublicKey) {
-                decryptedText = await decryptDmPayload(msg, parsed, { forceRemote: dmForceRefresh });
+                try {
+                  decryptedText = await decryptDmPayload(msg, parsed, { forceRemote: dmForceRefresh });
+                } catch (e) {
+                  // Decryption with message keys failed, will try fallback
+                  console.debug("DM decryptDmPayload failed, trying fallback:", e.message);
+                }
               }
 
+              // Fallback: try with derived key from current keypair and other user's server key
               if (decryptedText == null && dmFallbackKey) {
                 try {
                   decryptedText = await E2EE.decryptDmMessage(parsed, dmFallbackKey);
@@ -2955,10 +3011,16 @@ export default function Chat() {
                 }
               }
 
+              // If still not decrypted, force refresh and retry
               if (decryptedText == null && !dmForceRefresh && dmOtherId) {
                 dmForceRefresh = true;
                 dmFallbackKey = await deriveFallbackKey(true);
-                decryptedText = await decryptDmPayload(msg, parsed, { forceRemote: true });
+                try {
+                  decryptedText = await decryptDmPayload(msg, parsed, { forceRemote: true });
+                } catch (e) {
+                  // Decryption with refreshed keys failed
+                  console.debug("DM decryptDmPayload (force refresh) failed:", e.message);
+                }
                 if (decryptedText == null && dmFallbackKey) {
                   try {
                     decryptedText = await E2EE.decryptDmMessage(parsed, dmFallbackKey);
