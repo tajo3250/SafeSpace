@@ -282,7 +282,7 @@ export default function MessageList({
                 !isGifOnlyText &&
                 !isGifOnlyAttachmentText;
 
-            const isImageOnly = attachments.length > 0 && !showText;
+            const isImageOnly = !showText && (attachments.length > 0 || gifFromText);
 
             items.push(
                 <div

@@ -18,7 +18,7 @@ const {
   conversations,
   saveConversations,
 } = require("./data/store");
-const { verifySocketToken } = require("./utils/auth");
+const { verifySocketToken, getUserFromRequest } = require("./utils/auth");
 
 // Route modules
 const authRoutes = require("./routes/auth");
@@ -116,7 +116,12 @@ const upload = multer({
 app.use("/uploads", express.static(UPLOAD_DIR));
 
 // UPLOAD ROUTE
-app.post("/api/upload", upload.single("file"), (req, res) => {
+app.post("/api/upload", (req, res, next) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ message: "Unauthorized" });
+  req.user = user;
+  return next();
+}, upload.single("file"), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
