@@ -36,6 +36,14 @@ jobs:
         with:
           node-version: 20
 
+      - name: Sync version with tag
+        working-directory: desktop
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+
       - name: Install dependencies
         working-directory: desktop
         run: npm install
