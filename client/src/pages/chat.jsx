@@ -19,7 +19,7 @@ import { io } from "socket.io-client";
 import { useNavigate } from "react-router-dom";
 
 import { API_BASE, SOCKET_URL } from "../config";
-import { getToken, clearAuth } from "../utils/authStorage";
+import { getToken, clearAuth, setAuth } from "../utils/authStorage";
 import ChatSidebar from "../components/chat/ChatSidebar";
 import MessageList from "../components/chat/MessageList";
 import MessageInput from "../components/chat/MessageInput";
@@ -34,6 +34,9 @@ import {
   gifKey,
   normalizeGifRecord,
 } from "../utils/gifHelpers";
+import { useCallManager } from "../hooks/useCallManager";
+import IncomingCallModal from "../components/chat/call/IncomingCallModal";
+import ActiveCallOverlay from "../components/chat/call/ActiveCallOverlay";
 
 const socket = io(SOCKET_URL, { autoConnect: false });
 
@@ -89,10 +92,63 @@ export default function Chat() {
   const [lastActive, setLastActive] = useState({});
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // --- Notification sounds + muted conversations ---
+  const [mutedConversations, setMutedConversations] = useState(() => {
+    try {
+      const raw = localStorage.getItem("ss_muted_convs");
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch { return new Set(); }
+  });
+  const mutedConversationsRef = useRef(mutedConversations);
+  mutedConversationsRef.current = mutedConversations;
+
+  const toggleMuteConversation = useCallback((convId) => {
+    setMutedConversations((prev) => {
+      const next = new Set(prev);
+      if (next.has(convId)) next.delete(convId);
+      else next.add(convId);
+      try { localStorage.setItem("ss_muted_convs", JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  }, []);
+
+  const notifAudioCtxRef = useRef(null);
+  const playNotificationSound = useCallback(() => {
+    try {
+      if (!notifAudioCtxRef.current || notifAudioCtxRef.current.state === "closed") {
+        notifAudioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const ctx = notifAudioCtxRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+
+      // Short, pleasant "pop" notification
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1320, ctx.currentTime + 0.08);
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.15);
+
+      // Vibrate on mobile
+      if ("vibrate" in navigator) navigator.vibrate(50);
+    } catch {}
+  }, []);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [detailsTab, setDetailsTab] = useState("details");
   const [activeImage, setActiveImage] = useState(null);
   const mediaScrollRef = useRef(null);
+
+  // --- WebRTC calling ---
+  const {
+    callState, incomingCall, localStream, screenStream, remoteStreams, remoteMediaState,
+    streamUpdateTick, activeCallMap, startCall, acceptCall, rejectCall, leaveCall, toggleMute, toggleVideo, toggleScreenShare,
+  } = useCallManager(socket, currentUser);
 
   const [replyToId, setReplyToId] = useState(null);
   const [editingMessageId, setEditingMessageId] = useState(null);
@@ -284,6 +340,9 @@ export default function Chat() {
 
   const navigate = useNavigate();
   const selectedConversationRef = useRef(selectedConversationId);
+
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   const messagesByConversationRef = useRef(messagesByConversation);
   useEffect(() => {
@@ -1422,6 +1481,20 @@ export default function Chat() {
     socket.auth = { token };
     socket.connect();
 
+    // Silently refresh token to extend expiry each time the app loads
+    fetch(`${API_BASE}/api/refresh-token`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.token) {
+          setAuth(data.token, data.user);
+          socket.auth = { token: data.token };
+        }
+      })
+      .catch(() => {});
+
     socket.on("chat:history", (payload) => {
       if (!payload) return;
 
@@ -1580,6 +1653,16 @@ export default function Chat() {
         if (convId === selectedConversationRef.current) return prev;
         return { ...prev, [convId]: (prev[convId] || 0) + 1 };
       });
+
+      // Play notification sound for DMs/groups (not global, not from self, not muted)
+      if (
+        convId !== "global" &&
+        msg.senderId !== currentUserRef.current?.id &&
+        convId !== selectedConversationRef.current &&
+        !mutedConversationsRef.current.has(convId)
+      ) {
+        playNotificationSound();
+      }
     });
 
     socket.on("chat:message-deleted", ({ conversationId, messageId }) => {
@@ -1866,6 +1949,17 @@ export default function Chat() {
       socket.disconnect();
     };
   }, [navigate]);
+
+  // ---------- RECONNECT ON VISIBILITY CHANGE (mobile background/foreground) ----------
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && !socket.connected) {
+        socket.connect();
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, []);
 
   // ---------- E2EE INIT (keypair + upload public key) ----------
   useEffect(() => {
@@ -4068,6 +4162,10 @@ export default function Chat() {
             setIsCreatingGroup={setIsCreatingGroup}
             conversationLabel={conversationLabel}
             navigate={navigate}
+            mutedConversations={mutedConversations}
+            toggleMuteConversation={toggleMuteConversation}
+            activeCallMap={activeCallMap}
+            allUsers={allUsers}
           />
 
           {/* MAIN CHAT */}
@@ -4109,6 +4207,33 @@ export default function Chat() {
                   )}
                 </div>
 
+                {/* Call buttons (DMs and groups only, not global chat) */}
+                {currentConversation && currentConversation.type !== "public" && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => startCall(selectedConversationId, "voice")}
+                      disabled={!!callState}
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-lg bg-white/10 hover:bg-white/16 border border-white/10 text-slate-100 transition-all disabled:opacity-40 disabled:hover:bg-white/10"
+                      title="Voice call"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z" />
+                      </svg>
+                    </button>
+                    <button
+                      onClick={() => startCall(selectedConversationId, "video")}
+                      disabled={!!callState}
+                      className="inline-flex items-center justify-center h-9 w-9 rounded-lg bg-white/10 hover:bg-white/16 border border-white/10 text-slate-100 transition-all disabled:opacity-40 disabled:hover:bg-white/10"
+                      title="Video call"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5" />
+                        <rect x="2" y="6" width="14" height="12" rx="2" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
+
                 <button
                   className="lg:hidden inline-flex items-center justify-center h-11 w-11 rounded-xl bg-white/10 hover:bg-white/16 border border-white/10 text-slate-100 shadow-[0_12px_40px_-28px_rgba(0,0,0,0.85)]"
                   aria-label="Open details"
@@ -4124,6 +4249,55 @@ export default function Chat() {
                 </button>
               </div>
             </header>
+
+            {/* Join call banner — shows when someone else is in a call and the user is not */}
+            {!callState && activeCallMap?.[selectedConversationId] && activeCallMap[selectedConversationId].participants?.length > 0 && (
+              <div className="shrink-0 border-b border-green-500/20 bg-green-500/10 backdrop-blur-sm px-4 py-2.5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="relative flex h-2.5 w-2.5 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-400" />
+                  </span>
+                  <span className="text-sm text-green-200 truncate">
+                    <span className="font-semibold text-green-100">
+                      {activeCallMap[selectedConversationId].participants
+                        .map((uid) => {
+                          const u = allUsers?.find((x) => x.id === uid);
+                          return u?.username || "Someone";
+                        })
+                        .join(", ")}
+                    </span>
+                    {" "}in {activeCallMap[selectedConversationId].type === "video" ? "video" : "voice"} call
+                  </span>
+                </div>
+                <button
+                  onClick={() => startCall(selectedConversationId, activeCallMap[selectedConversationId].type || "voice")}
+                  className="shrink-0 px-4 py-1.5 rounded-lg bg-green-500/80 hover:bg-green-500 border border-green-400/40 text-white text-sm font-semibold transition-all shadow-[0_8px_24px_-12px_rgba(34,197,94,0.6)]"
+                >
+                  Join Call
+                </button>
+              </div>
+            )}
+
+            {/* Call bar + panel (Discord-style, inline between header and messages) */}
+            {callState && (
+              <ActiveCallOverlay
+                callState={callState}
+                localStream={localStream}
+                screenStream={screenStream}
+                remoteStreams={remoteStreams}
+                remoteMediaState={remoteMediaState}
+                streamUpdateTick={streamUpdateTick}
+                onToggleMute={toggleMute}
+                onToggleVideo={toggleVideo}
+                onToggleScreenShare={toggleScreenShare}
+                onLeaveCall={leaveCall}
+                allUsers={allUsers}
+                conversationLabel={conversationLabel(
+                  conversations.find((c) => c.id === callState.conversationId)
+                ).replace(/^DM: /, "")}
+              />
+            )}
 
             {/* Messages */}
             <MessageList
@@ -4829,6 +5003,17 @@ export default function Chat() {
             </div>
           </div>
         )}
+
+      {/* ---- Call overlays ---- */}
+      {incomingCall && (
+        <IncomingCallModal
+          incomingCall={incomingCall}
+          onAccept={acceptCall}
+          onReject={rejectCall}
+          allUsers={allUsers}
+        />
+      )}
+
       </div>
     </div>
   );

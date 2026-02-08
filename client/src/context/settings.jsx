@@ -8,6 +8,8 @@ const STORAGE_KEY = "ss_settings_v1";
 const DEFAULT_SETTINGS = {
   textSize: "md", // sm | md | lg
   accent: "teal", // teal | blue | purple | rose | amber | lime
+  audioInputDeviceId: "", // microphone device ID (empty = system default)
+  videoInputDeviceId: "", // camera device ID (empty = system default)
 };
 
 function readStoredSettings() {
@@ -23,6 +25,10 @@ function readStoredSettings() {
         ["teal", "blue", "purple", "rose", "amber", "lime"].includes(parsed?.accent)
           ? parsed.accent
           : "teal",
+      audioInputDeviceId:
+        typeof parsed?.audioInputDeviceId === "string" ? parsed.audioInputDeviceId : "",
+      videoInputDeviceId:
+        typeof parsed?.videoInputDeviceId === "string" ? parsed.videoInputDeviceId : "",
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -60,6 +66,8 @@ export function SettingsProvider({ children }) {
     () => ({
       textSize: settings.textSize,
       accent: settings.accent,
+      audioInputDeviceId: settings.audioInputDeviceId,
+      videoInputDeviceId: settings.videoInputDeviceId,
       setTextSize: (textSize) =>
         setSettings((prev) => ({
           ...prev,
@@ -71,6 +79,16 @@ export function SettingsProvider({ children }) {
           accent: ["teal", "blue", "purple", "rose", "amber", "lime"].includes(accent)
             ? accent
             : "teal",
+        })),
+      setAudioInputDeviceId: (deviceId) =>
+        setSettings((prev) => ({
+          ...prev,
+          audioInputDeviceId: typeof deviceId === "string" ? deviceId : "",
+        })),
+      setVideoInputDeviceId: (deviceId) =>
+        setSettings((prev) => ({
+          ...prev,
+          videoInputDeviceId: typeof deviceId === "string" ? deviceId : "",
         })),
       reset: () => setSettings(DEFAULT_SETTINGS),
     }),
@@ -87,6 +105,8 @@ export function useSettings() {
       ...DEFAULT_SETTINGS,
       setTextSize: () => {},
       setAccent: () => {},
+      setAudioInputDeviceId: () => {},
+      setVideoInputDeviceId: () => {},
       reset: () => {},
     };
   }

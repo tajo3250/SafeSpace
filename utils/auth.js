@@ -22,7 +22,7 @@ function signUserToken(user) {
   return jwt.sign(
     { id: user.id, username: user.username, email: user.email },
     SECRET_KEY,
-    { expiresIn: "7d" }
+    { expiresIn: "90d" }
   );
 }
 

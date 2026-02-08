@@ -115,6 +115,32 @@ router.post("/api/login", async (req, res) => {
   });
 });
 
+// REFRESH TOKEN — issues a fresh token if the current one is still valid
+router.post("/api/refresh-token", (req, res) => {
+  const auth = req.headers.authorization || "";
+  const [, token] = auth.split(" ");
+  if (!token) return res.status(401).json({ message: "No token" });
+
+  try {
+    const payload = jwt.verify(token, SECRET_KEY);
+    const user = users.find((u) => u.id === payload.id);
+    if (!user) return res.status(401).json({ message: "User not found" });
+
+    const newToken = signUserToken(user);
+    res.json({
+      token: newToken,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        createdAt: user.createdAt,
+      },
+    });
+  } catch {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
+});
+
 // REQUEST PASSWORD RESET
 router.post("/api/request-password-reset", async (req, res) => {
   const { email } = req.body;

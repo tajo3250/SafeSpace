@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useRef, useEffect } from "react";
 import logoWordmark from "../../assets/brand/logo-wordmark.svg";
 
 export default function ChatSidebar({
@@ -17,8 +17,32 @@ export default function ChatSidebar({
     joinConversation,
     setIsCreatingGroup,
     conversationLabel,
-    navigate // accessible from parent hook or passed down
+    navigate,
+    mutedConversations,
+    toggleMuteConversation,
+    activeCallMap,
+    allUsers,
 }) {
+    const [contextMenu, setContextMenu] = useState(null); // { x, y, convId }
+    const contextRef = useRef(null);
+
+    // Close context menu on outside click
+    useEffect(() => {
+        if (!contextMenu) return;
+        const handler = () => setContextMenu(null);
+        document.addEventListener("click", handler);
+        document.addEventListener("contextmenu", handler);
+        return () => {
+            document.removeEventListener("click", handler);
+            document.removeEventListener("contextmenu", handler);
+        };
+    }, [contextMenu]);
+
+    const getUserName = (uid) => {
+        const u = allUsers?.find((x) => x.id === uid);
+        return u?.username || "User";
+    };
+
     return (
         <aside
             className={[
@@ -114,6 +138,7 @@ export default function ChatSidebar({
                         .map((conv) => {
                             const unread = unreadCounts[conv.id] || 0;
                             const active = conv.id === selectedConversationId;
+                            const callInfo = activeCallMap?.[conv.id];
 
                             const base =
                                 "w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl border text-sm transition-all duration-200 group overflow-hidden relative";
@@ -122,21 +147,56 @@ export default function ChatSidebar({
                                 : "bg-white/[0.02] border-white/5 hover:border-white/10 hover:bg-white/[0.06]";
                             const unreadCls = unread > 0 ? "ring-1 ring-[rgb(var(--ss-accent-rgb)/0.4)]" : "";
 
+                            const isMuted = mutedConversations?.has?.(conv.id);
+
                             return (
-                                <button
-                                    key={conv.id}
-                                    onClick={() => joinConversation(conv.id)}
-                                    className={`${base} ${activeCls} ${unreadCls}`}
-                                >
-                                    <span className={`truncate ${active ? "text-white font-medium" : "text-slate-200 group-hover:text-white"}`}>
-                                        {conversationLabel(conv)}
-                                    </span>
-                                    {unread > 0 && (
-                                        <span className="shrink-0 text-[11px] px-2.5 py-0.5 rounded-full pill-accent font-semibold">
-                                            {unread}
+                                <div key={conv.id}>
+                                    <button
+                                        onClick={() => joinConversation(conv.id)}
+                                        onContextMenu={(e) => {
+                                            if (conv.id === "global") return;
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setContextMenu({ x: e.clientX, y: e.clientY, convId: conv.id });
+                                        }}
+                                        className={`${base} ${activeCls} ${unreadCls}`}
+                                    >
+                                        <span className={`truncate ${active ? "text-white font-medium" : "text-slate-200 group-hover:text-white"}`}>
+                                            {isMuted && (
+                                                <svg className="inline-block mr-1.5 -mt-0.5 opacity-50" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                                                    <line x1="23" y1="9" x2="17" y2="15" />
+                                                    <line x1="17" y1="9" x2="23" y2="15" />
+                                                </svg>
+                                            )}
+                                            {conversationLabel(conv)}
                                         </span>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                            {callInfo && (
+                                                <span className="flex items-center gap-1 text-[10px] text-green-400 bg-green-500/15 border border-green-500/20 px-1.5 py-0.5 rounded-full">
+                                                    <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
+                                                    {callInfo.participants.length}
+                                                </span>
+                                            )}
+                                            {unread > 0 && (
+                                                <span className="text-[11px] px-2.5 py-0.5 rounded-full pill-accent font-semibold">
+                                                    {unread}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </button>
+                                    {/* Active call indicator below conversation */}
+                                    {callInfo && (
+                                        <div className="ml-3 mt-0.5 mb-1 flex items-center gap-1.5 text-[10px] text-green-300/80">
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92Z" />
+                                            </svg>
+                                            <span className="truncate">
+                                                {callInfo.participants.map((uid) => getUserName(uid)).join(", ")} in call
+                                            </span>
+                                        </div>
                                     )}
-                                </button>
+                                </div>
                             );
                         })}
                 </div>
@@ -161,6 +221,40 @@ export default function ChatSidebar({
                     Close
                 </button>
             </div>
+            {/* Right-click context menu */}
+            {contextMenu && (
+                <div
+                    ref={contextRef}
+                    className="fixed z-[60] min-w-[140px] rounded-xl bg-[#0c111d]/95 border border-white/12 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl overflow-hidden py-1"
+                    style={{ top: contextMenu.y, left: contextMenu.x }}
+                >
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            toggleMuteConversation(contextMenu.convId);
+                            setContextMenu(null);
+                        }}
+                        className="w-full text-left px-4 py-2.5 text-sm text-slate-100 hover:bg-white/10 transition-colors flex items-center gap-2"
+                    >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            {mutedConversations?.has?.(contextMenu.convId) ? (
+                                <>
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                                </>
+                            ) : (
+                                <>
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                                    <line x1="23" y1="9" x2="17" y2="15" />
+                                    <line x1="17" y1="9" x2="23" y2="15" />
+                                </>
+                            )}
+                        </svg>
+                        {mutedConversations?.has?.(contextMenu.convId) ? "Unmute" : "Mute"}
+                    </button>
+                </div>
+            )}
         </aside>
     );
 }

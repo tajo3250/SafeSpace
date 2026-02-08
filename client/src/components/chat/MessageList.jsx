@@ -693,8 +693,8 @@ export default function MessageList({
                                             </div>
                                         </div>
 
-                                        {/* ACTIONS */}
-                                        <div className="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity scale-90 group-hover:scale-100">
+                                        {/* ACTIONS - always visible on mobile, hover-reveal on desktop */}
+                                        <div className="flex items-center gap-2 shrink-0 opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity scale-95 md:scale-90 md:group-hover:scale-100">
                                             {onReactToMessage && (
                                                 <button
                                                     onClick={(e) => openReactionPicker(msg.id, e)}

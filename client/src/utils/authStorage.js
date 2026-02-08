@@ -1,15 +1,11 @@
-// Thin auth storage helper - supports "remember me" by choosing
-// between localStorage (persistent) and sessionStorage (tab-scoped).
-// Desktop app always uses localStorage so sessions survive app restarts.
-
-const isDesktop = typeof window !== "undefined" && !!window.electronAPI;
+// Auth storage helper - always uses localStorage for persistent sessions.
 
 export function getToken() {
-  return sessionStorage.getItem("token") || localStorage.getItem("token");
+  return localStorage.getItem("token") || sessionStorage.getItem("token");
 }
 
 export function getUser() {
-  const raw = sessionStorage.getItem("user") || localStorage.getItem("user");
+  const raw = localStorage.getItem("user") || sessionStorage.getItem("user");
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -18,16 +14,12 @@ export function getUser() {
   }
 }
 
-export function setAuth(token, user, remember) {
-  // Desktop app always persists - no session-only mode
-  const persist = isDesktop || remember;
-  const storage = persist ? localStorage : sessionStorage;
-  storage.setItem("token", token);
-  storage.setItem("user", JSON.stringify(user));
-  // Clear the other storage to avoid stale data
-  const other = persist ? sessionStorage : localStorage;
-  other.removeItem("token");
-  other.removeItem("user");
+export function setAuth(token, user) {
+  localStorage.setItem("token", token);
+  localStorage.setItem("user", JSON.stringify(user));
+  // Clean up any stale sessionStorage data from older versions
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("user");
 }
 
 export function clearAuth() {

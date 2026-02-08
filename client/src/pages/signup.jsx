@@ -1,8 +1,9 @@
 // src/pages/signup.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { API_BASE } from "../config";
 import BrandHeader from "../components/brand/BrandHeader";
+import { getToken, getUser } from "../utils/authStorage";
 
 
 
@@ -11,6 +12,10 @@ export default function Signup() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (getToken() && getUser()) navigate("/chat", { replace: true });
+  }, [navigate]);
 
   const handleSignup = async (e) => {
     e.preventDefault();

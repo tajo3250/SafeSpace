@@ -25,6 +25,7 @@ const authRoutes = require("./routes/auth");
 const userRoutes = require("./routes/users");
 const conversationRoutes = require("./routes/conversations");
 const gifRoutes = require("./routes/gifs");
+const { registerCallEvents, handleCallDisconnect } = require("./routes/calling");
 
 // RATE LIMITER: map user ID -> { count, startTime }
 // 5 messages per 5 seconds
@@ -321,7 +322,6 @@ app.get("/api/download/:platform", async (req, res) => {
   const platform = req.params.platform;
   const patterns = {
     windows: /\.exe$/i,
-    mac: /\.zip$/i,
     linux: /\.AppImage$/i,
   };
 
@@ -347,35 +347,6 @@ app.get("/api/download/:platform", async (req, res) => {
     res.redirect(302, asset.browser_download_url);
   } catch {
     res.status(502).json({ error: "Failed to fetch release info" });
-  }
-});
-
-// macOS install script - downloads, extracts, removes quarantine, moves to /Applications
-app.get("/api/install-mac", async (req, res) => {
-  try {
-    const release = await getLatestRelease();
-    const asset = release?.assets?.find(
-      (a) => /\.zip$/i.test(a.name) && !a.name.includes("blockmap")
-    );
-    const url = asset?.browser_download_url || `https://github.com/hxn1-z/SafeSpace/releases/latest/download/SafeSpace-mac.zip`;
-
-    res.type("text/plain").send(`#!/bin/bash
-set -e
-echo "Installing SafeSpace..."
-TMP=$(mktemp -d)
-curl -sL "${url}" -o "$TMP/SafeSpace.zip"
-ditto -xk "$TMP/SafeSpace.zip" "$TMP"
-APP=$(find "$TMP" -name "SafeSpace.app" -maxdepth 2 | head -1)
-if [ -z "$APP" ]; then echo "Error: SafeSpace.app not found in archive"; rm -rf "$TMP"; exit 1; fi
-xattr -cr "$APP"
-[ -d "/Applications/SafeSpace.app" ] && rm -rf "/Applications/SafeSpace.app"
-mv "$APP" /Applications/
-rm -rf "$TMP"
-echo "SafeSpace installed to /Applications. Opening..."
-open /Applications/SafeSpace.app
-`);
-  } catch {
-    res.status(502).type("text/plain").send("echo 'Failed to fetch release info'; exit 1");
   }
 });
 
@@ -889,8 +860,12 @@ io.on("connection", (socket) => {
     });
   });
 
+  // --- WebRTC call signaling ---
+  registerCallEvents(io, socket, conversations);
+
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.user.username);
+    handleCallDisconnect(io, socket);
   });
 });
 
@@ -907,8 +882,8 @@ app.get(/.*/, (req, res, next) => {
   if (req.path.startsWith("/api") || req.path.startsWith("/socket.io") || req.path.startsWith("/downloads")) {
     return next();
   }
-  // Return 404 for old PWA files so browsers stop treating the site as installable
-  if (/\.(webmanifest|map)$/.test(req.path) || req.path === "/registerSW.js") {
+  // Return 404 for stale build artifacts
+  if (/\.map$/.test(req.path) || req.path === "/registerSW.js") {
     return res.status(404).end();
   }
   res.sendFile(path.join(distPath, "index.html"));

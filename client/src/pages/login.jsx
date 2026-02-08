@@ -1,11 +1,11 @@
 // src/pages/login.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 
 import { API_BASE } from "../config";
 import BrandHeader from "../components/brand/BrandHeader";
 import * as E2EE from "../utils/e2ee";
-import { setAuth } from "../utils/authStorage";
+import { setAuth, getToken, getUser } from "../utils/authStorage";
 
 // --- E2EE key bundle helpers (ciphertext-only backup) ---
 const E2EE_LOCAL_KEY_PREFIX = "e2eeKeyPair:";
@@ -308,8 +308,16 @@ async function ensureE2EEKeysAfterLogin({ token, userId, password }) {
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(true);
   const navigate = useNavigate();
+
+  // Auto-redirect to chat if already logged in
+  useEffect(() => {
+    const token = getToken();
+    const user = getUser();
+    if (token && user) {
+      navigate("/chat", { replace: true });
+    }
+  }, [navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -323,7 +331,7 @@ export default function Login() {
       const data = await res.json();
       if (!res.ok) return alert(data.message);
 
-      setAuth(data.token, data.user, rememberMe);
+      setAuth(data.token, data.user);
 
       // E2EE: restore/create stable keys BEFORE entering chat (prevents key resets on new domains)
       try {
@@ -367,19 +375,6 @@ export default function Login() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
-
-          {/* Hide "Remember me" in desktop app - always persisted there */}
-          {typeof window !== "undefined" && !window.electronAPI && (
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={rememberMe}
-                onChange={(e) => setRememberMe(e.target.checked)}
-                className="w-4 h-4 rounded border-white/20 bg-white/5 accent-[rgb(var(--ss-accent-rgb))]"
-              />
-              <span className="text-sm text-slate-300">Remember me</span>
-            </label>
-          )}
 
           <button
             type="submit"

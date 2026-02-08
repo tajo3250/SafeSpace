@@ -18,9 +18,6 @@ jobs:
           - os: ubuntu-latest
             platform: linux
             build_args: --linux
-          - os: macos-latest
-            platform: mac
-            build_args: --mac
           - os: windows-latest
             platform: windows
             build_args: --win

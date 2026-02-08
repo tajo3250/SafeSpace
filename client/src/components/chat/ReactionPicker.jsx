@@ -25,20 +25,25 @@ export default function ReactionPicker({ isOpen, rect, onSelect, onClose }) {
             if (e.key === "Escape") onClose();
         };
         document.addEventListener("mousedown", handleClick);
+        document.addEventListener("touchstart", handleClick);
         document.addEventListener("keydown", handleKey);
         return () => {
             document.removeEventListener("mousedown", handleClick);
+            document.removeEventListener("touchstart", handleClick);
             document.removeEventListener("keydown", handleKey);
         };
     }, [isOpen, onClose]);
 
     if (!isOpen || !rect) return null;
 
-    // Position the popover near the button
+    // Position the popover centered on the trigger button, clamped to viewport
+    const pickerWidth = 296;
+    const centerLeft = rect.left + rect.width / 2 - pickerWidth / 2;
+    const clampedLeft = Math.max(8, Math.min(centerLeft, window.innerWidth - pickerWidth - 8));
     const style = {
         position: "fixed",
         zIndex: 80,
-        left: Math.min(rect.left, window.innerWidth - 320),
+        left: clampedLeft,
         top: rect.top - 48,
     };
     // If too close to top, show below
