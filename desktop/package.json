@@ -1,6 +1,6 @@
 {
   "name": "safespace-desktop",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "SafeSpace — Encrypted messaging, on your desktop.",
   "main": "main.js",
   "homepage": "https://safespace.hxn1.dev",
@@ -49,8 +49,7 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "icons/icon.png"
+      "allowToChangeInstallationDirectory": true
     },
     "mac": {
       "target": "dmg",

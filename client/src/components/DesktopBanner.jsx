@@ -1,8 +1,6 @@
 // Shared desktop download banner — shown on ALL pages in browser, hidden in Electron.
 // Closeable with 7-day localStorage persistence.
-// Shows "Install Now" (PWA) when available, otherwise "Download for {OS}".
 import React, { useState, useEffect } from "react";
-import { usePWAInstall } from "../hooks/usePWAInstall";
 
 const DISMISS_KEY = "ss-desktop-banner-dismissed";
 const DISMISS_DAYS = 7;
@@ -19,10 +17,9 @@ const platformLabels = { windows: "Windows", mac: "macOS", linux: "Linux" };
 
 export default function DesktopBanner() {
   const [visible, setVisible] = useState(false);
-  const { canInstall, promptInstall } = usePWAInstall();
 
   useEffect(() => {
-    // Never show in Electron or installed PWA
+    // Never show in Electron
     if (typeof window === "undefined" || window.electronAPI) return;
     if (window.matchMedia("(display-mode: standalone)").matches) return;
     try {
@@ -60,25 +57,10 @@ export default function DesktopBanner() {
   return (
     <div className="shrink-0 bg-[rgb(var(--ss-accent-rgb))] text-slate-900 text-xs font-medium text-center py-2 px-4 flex items-center justify-center gap-2 relative z-[100]">
       <span>
-        {canInstall ? (
-          <>
-            Install SafeSpace as an app &mdash;{" "}
-            <button
-              type="button"
-              onClick={promptInstall}
-              className="underline font-bold bg-transparent border-none cursor-pointer text-slate-900 text-xs"
-            >
-              Install Now
-            </button>
-          </>
-        ) : (
-          <>
-            SafeSpace is available as a desktop app &mdash;{" "}
-            <a href="/download" className="underline font-bold">
-              Download for {platformLabels[os] || "your OS"}
-            </a>
-          </>
-        )}
+        SafeSpace is available as a desktop app &mdash;{" "}
+        <a href="/download" className="underline font-bold">
+          Download for {platformLabels[os] || "your OS"}
+        </a>
       </span>
       <button
         type="button"

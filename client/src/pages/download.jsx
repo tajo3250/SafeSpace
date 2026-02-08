@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import BrandHeader from "../components/brand/BrandHeader";
 import { API_BASE } from "../config";
-import { usePWAInstall } from "../hooks/usePWAInstall";
 
 function detectOS() {
   const ua = navigator.userAgent || "";
@@ -20,7 +19,6 @@ const platforms = {
 
 export default function Download() {
   const os = detectOS();
-  const { canInstall, isIOS, promptInstall } = usePWAInstall();
   const [version, setVersion] = useState(null);
 
   useEffect(() => {
@@ -54,25 +52,6 @@ export default function Download() {
             )}
           </a>
 
-          {/* PWA install option */}
-          {canInstall && (
-            <button
-              onClick={promptInstall}
-              type="button"
-              className="block w-full py-3 rounded-xl bg-white/10 border border-white/10 text-white font-semibold text-center hover:bg-white/15 transition"
-            >
-              Install as Web App (no download)
-            </button>
-          )}
-
-          {/* iOS install instructions */}
-          {isIOS && (
-            <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-sm text-slate-300">
-              On iOS: tap the <strong>Share</strong> button, then{" "}
-              <strong>Add to Home Screen</strong>.
-            </div>
-          )}
-
           {/* Other platforms */}
           <div className="pt-2 border-t border-white/10">
             <div className="text-xs text-slate-400 mb-2">Other platforms</div>
@@ -88,6 +67,10 @@ export default function Download() {
               ))}
             </div>
           </div>
+
+          <p className="text-xs text-slate-500 text-center pt-1">
+            Or use SafeSpace directly in your browser &mdash; no install needed.
+          </p>
         </div>
 
         <div className="mt-4 text-center text-sm">
