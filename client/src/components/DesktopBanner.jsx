@@ -21,13 +21,7 @@ export default function DesktopBanner() {
   useEffect(() => {
     // Never show in Electron
     if (typeof window === "undefined" || window.electronAPI) return;
-    if (window.matchMedia("(display-mode: standalone)").matches) return;
-    try {
-      const ts = localStorage.getItem(DISMISS_KEY);
-      if (ts && Date.now() - Number(ts) < DISMISS_DAYS * 86400000) return;
-    } catch {
-      // ignore
-    }
+    // Always show in browser — no dismiss check
     setVisible(true);
   }, []);
 

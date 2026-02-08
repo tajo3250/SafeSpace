@@ -873,10 +873,14 @@ io.on("connection", (socket) => {
 const distPath = path.join(__dirname, "client", "dist");
 app.use(express.static(distPath));
 
-// SPA fallback for React Router, but skip API + Socket.IO + download paths
+// SPA fallback for React Router, but skip API + Socket.IO + download paths + old PWA files
 app.get(/.*/, (req, res, next) => {
   if (req.path.startsWith("/api") || req.path.startsWith("/socket.io") || req.path.startsWith("/downloads")) {
     return next();
+  }
+  // Return 404 for old PWA files so browsers stop treating the site as installable
+  if (/\.(webmanifest|map)$/.test(req.path) || req.path === "/registerSW.js") {
+    return res.status(404).end();
   }
   res.sendFile(path.join(distPath, "index.html"));
 });

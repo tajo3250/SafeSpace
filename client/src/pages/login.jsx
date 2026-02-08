@@ -397,6 +397,19 @@ export default function Login() {
             Forgot password?
           </Link>
         </div>
+
+        {/* Desktop app download link — always visible in browser */}
+        {typeof window !== "undefined" && !window.electronAPI && (
+          <div className="mt-5 pt-4 border-t border-white/10 text-center">
+            <p className="text-xs text-slate-400 mb-2">Get the desktop app for the best experience</p>
+            <Link
+              to="/download"
+              className="inline-block w-full py-2 rounded-xl bg-white/5 border border-white/10 text-sm text-[rgb(var(--ss-accent-rgb))] font-semibold hover:bg-white/10 transition"
+            >
+              Download SafeSpace
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );
