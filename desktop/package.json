@@ -54,7 +54,12 @@
     "mac": {
       "target": "dmg",
       "icon": "icons/icon.png",
-      "category": "public.app-category.social-networking"
+      "category": "public.app-category.social-networking",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "notarize": true
     },
     "linux": {
       "target": ["AppImage"],

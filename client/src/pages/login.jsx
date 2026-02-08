@@ -368,15 +368,18 @@ export default function Login() {
             required
           />
 
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              className="w-4 h-4 rounded border-white/20 bg-white/5 accent-[rgb(var(--ss-accent-rgb))]"
-            />
-            <span className="text-sm text-slate-300">Remember me</span>
-          </label>
+          {/* Hide "Remember me" in desktop app — always persisted there */}
+          {typeof window !== "undefined" && !window.electronAPI && (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded border-white/20 bg-white/5 accent-[rgb(var(--ss-accent-rgb))]"
+              />
+              <span className="text-sm text-slate-300">Remember me</span>
+            </label>
+          )}
 
           <button
             type="submit"
