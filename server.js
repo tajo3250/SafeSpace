@@ -350,6 +350,35 @@ app.get("/api/download/:platform", async (req, res) => {
   }
 });
 
+// macOS install script - downloads, extracts, removes quarantine, moves to /Applications
+app.get("/api/install-mac", async (req, res) => {
+  try {
+    const release = await getLatestRelease();
+    const asset = release?.assets?.find(
+      (a) => /\.zip$/i.test(a.name) && !a.name.includes("blockmap")
+    );
+    const url = asset?.browser_download_url || `https://github.com/hxn1-z/SafeSpace/releases/latest/download/SafeSpace-mac.zip`;
+
+    res.type("text/plain").send(`#!/bin/bash
+set -e
+echo "Installing SafeSpace..."
+TMP=$(mktemp -d)
+curl -sL "${url}" -o "$TMP/SafeSpace.zip"
+ditto -xk "$TMP/SafeSpace.zip" "$TMP"
+APP=$(find "$TMP" -name "SafeSpace.app" -maxdepth 2 | head -1)
+if [ -z "$APP" ]; then echo "Error: SafeSpace.app not found in archive"; rm -rf "$TMP"; exit 1; fi
+xattr -cr "$APP"
+[ -d "/Applications/SafeSpace.app" ] && rm -rf "/Applications/SafeSpace.app"
+mv "$APP" /Applications/
+rm -rf "$TMP"
+echo "SafeSpace installed to /Applications. Opening..."
+open /Applications/SafeSpace.app
+`);
+  } catch {
+    res.status(502).type("text/plain").send("echo 'Failed to fetch release info'; exit 1");
+  }
+});
+
 // UPLOAD ROUTE
 app.post("/api/upload", (req, res, next) => {
   const user = getUserFromRequest(req);

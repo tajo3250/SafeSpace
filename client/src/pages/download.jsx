@@ -17,6 +17,44 @@ const platforms = {
   linux: { label: "Linux", ext: ".AppImage" },
 };
 
+function MacInstall({ version }) {
+  const [copied, setCopied] = useState(false);
+  const cmd = `curl -sL ${API_BASE}/api/install-mac | bash`;
+
+  const copy = () => {
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch(() => {});
+  };
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-slate-300 font-medium text-center">
+        Install for macOS
+        {version && <span className="ml-1 text-xs text-slate-500">v{version}</span>}
+      </p>
+      <p className="text-xs text-slate-400 text-center">
+        Open Terminal and paste this command:
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 block text-xs bg-black/40 rounded-lg px-3 py-2.5 text-slate-200 font-mono select-all overflow-x-auto">
+          {cmd}
+        </code>
+        <button
+          onClick={copy}
+          className="shrink-0 px-3 py-2.5 rounded-lg bg-[rgb(var(--ss-accent-rgb))] text-slate-900 text-xs font-semibold hover:brightness-110 transition"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p className="text-xs text-slate-500 text-center">
+        Downloads, installs, and opens SafeSpace automatically.
+      </p>
+    </div>
+  );
+}
+
 export default function Download() {
   const os = detectOS();
   const [version, setVersion] = useState(null);
@@ -41,22 +79,19 @@ export default function Download() {
         />
 
         <div className="mt-6 space-y-3">
-          {/* Primary download button */}
-          <a
-            href={`${API_BASE}/api/download/${os}`}
-            className="block w-full py-3 rounded-xl bg-[rgb(var(--ss-accent-rgb))] text-slate-900 font-semibold text-center shadow hover:brightness-110 active:scale-[0.99] transition"
-          >
-            Download for {platforms[os].label}
-            {version && (
-              <span className="ml-1 text-xs opacity-70">v{version}</span>
-            )}
-          </a>
-
-          {/* macOS hint */}
-          {os === "mac" && (
-            <p className="text-xs text-slate-500 text-center">
-              Extract the zip and drag SafeSpace to your Applications folder.
-            </p>
+          {/* macOS uses install command, other platforms use direct download */}
+          {os === "mac" ? (
+            <MacInstall version={version} />
+          ) : (
+            <a
+              href={`${API_BASE}/api/download/${os}`}
+              className="block w-full py-3 rounded-xl bg-[rgb(var(--ss-accent-rgb))] text-slate-900 font-semibold text-center shadow hover:brightness-110 active:scale-[0.99] transition"
+            >
+              Download for {platforms[os].label}
+              {version && (
+                <span className="ml-1 text-xs opacity-70">v{version}</span>
+              )}
+            </a>
           )}
 
           {/* Other platforms */}
@@ -66,7 +101,8 @@ export default function Download() {
               {others.map((p) => (
                 <a
                   key={p}
-                  href={`${API_BASE}/api/download/${p}`}
+                  href={p === "mac" ? "#" : `${API_BASE}/api/download/${p}`}
+                  onClick={p === "mac" ? (e) => { e.preventDefault(); window.scrollTo({ top: 0, behavior: "smooth" }); } : undefined}
                   className="flex-1 py-2 rounded-xl bg-white/5 border border-white/10 text-slate-200 text-sm font-medium text-center hover:bg-white/10 transition"
                 >
                   {platforms[p].label}
