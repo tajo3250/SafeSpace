@@ -1231,7 +1231,7 @@ export default function Chat() {
       return;
     }
 
-    // Extract plain upload filenames for server-side file tracking (not sensitive — filenames are random UUIDs)
+    // Extract plain upload filenames for server-side file tracking (not sensitive - filenames are random UUIDs)
     const fileRefs = [];
     if (hasAttachments) {
       const uploadRegex = /\/uploads\/([a-zA-Z0-9._-]+)/;

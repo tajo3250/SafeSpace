@@ -1,7 +1,7 @@
 {
   "name": "safespace-desktop",
   "version": "1.0.4",
-  "description": "SafeSpace — Encrypted messaging, on your desktop.",
+  "description": "SafeSpace - Encrypted messaging, on your desktop.",
   "main": "main.js",
   "homepage": "https://safespace.hxn1.dev",
   "author": {
@@ -52,14 +52,14 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
-      "target": "dmg",
+      "target": [
+        {
+          "target": "zip",
+          "arch": ["universal"]
+        }
+      ],
       "icon": "icons/icon.png",
-      "category": "public.app-category.social-networking",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "entitlements.mac.plist",
-      "entitlementsInherit": "entitlements.mac.plist",
-      "notarize": true
+      "category": "public.app-category.social-networking"
     },
     "linux": {
       "target": ["AppImage"],

@@ -368,7 +368,7 @@ export default function Login() {
             required
           />
 
-          {/* Hide "Remember me" in desktop app — always persisted there */}
+          {/* Hide "Remember me" in desktop app - always persisted there */}
           {typeof window !== "undefined" && !window.electronAPI && (
             <label className="flex items-center gap-2 cursor-pointer select-none">
               <input
@@ -401,7 +401,7 @@ export default function Login() {
           </Link>
         </div>
 
-        {/* Desktop app download link — always visible in browser */}
+        {/* Desktop app download link - always visible in browser */}
         {typeof window !== "undefined" && !window.electronAPI && (
           <div className="mt-5 pt-4 border-t border-white/10 text-center">
             <p className="text-xs text-slate-400 mb-2">Get the desktop app for the best experience</p>

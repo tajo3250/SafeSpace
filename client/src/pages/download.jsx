@@ -13,7 +13,7 @@ function detectOS() {
 
 const platforms = {
   windows: { label: "Windows", ext: ".exe" },
-  mac: { label: "macOS", ext: ".dmg" },
+  mac: { label: "macOS", ext: ".zip" },
   linux: { label: "Linux", ext: ".AppImage" },
 };
 
@@ -52,6 +52,13 @@ export default function Download() {
             )}
           </a>
 
+          {/* macOS hint */}
+          {os === "mac" && (
+            <p className="text-xs text-slate-500 text-center">
+              Extract the zip and drag SafeSpace to your Applications folder.
+            </p>
+          )}
+
           {/* Other platforms */}
           <div className="pt-2 border-t border-white/10">
             <div className="text-xs text-slate-400 mb-2">Other platforms</div>
@@ -69,7 +76,7 @@ export default function Download() {
           </div>
 
           <p className="text-xs text-slate-500 text-center pt-1">
-            Or use SafeSpace directly in your browser &mdash; no install needed.
+            Or use SafeSpace directly in your browser - no install needed.
           </p>
         </div>
 

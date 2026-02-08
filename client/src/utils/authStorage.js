@@ -1,4 +1,4 @@
-// Thin auth storage helper — supports "remember me" by choosing
+// Thin auth storage helper - supports "remember me" by choosing
 // between localStorage (persistent) and sessionStorage (tab-scoped).
 // Desktop app always uses localStorage so sessions survive app restarts.
 
@@ -19,7 +19,7 @@ export function getUser() {
 }
 
 export function setAuth(token, user, remember) {
-  // Desktop app always persists — no session-only mode
+  // Desktop app always persists - no session-only mode
   const persist = isDesktop || remember;
   const storage = persist ? localStorage : sessionStorage;
   storage.setItem("token", token);

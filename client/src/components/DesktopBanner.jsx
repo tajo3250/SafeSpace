@@ -1,4 +1,4 @@
-// Shared desktop download banner — shown on ALL pages in browser, hidden in Electron.
+// Shared desktop download banner - shown on ALL pages in browser, hidden in Electron.
 // Closeable with 7-day localStorage persistence.
 import React, { useState, useEffect } from "react";
 
@@ -21,7 +21,7 @@ export default function DesktopBanner() {
   useEffect(() => {
     // Never show in Electron
     if (typeof window === "undefined" || window.electronAPI) return;
-    // Always show in browser — no dismiss check
+    // Always show in browser - no dismiss check
     setVisible(true);
   }, []);
 
@@ -51,7 +51,7 @@ export default function DesktopBanner() {
   return (
     <div className="shrink-0 bg-[rgb(var(--ss-accent-rgb))] text-slate-900 text-xs font-medium text-center py-2 px-4 flex items-center justify-center gap-2 relative z-[100]">
       <span>
-        SafeSpace is available as a desktop app &mdash;{" "}
+        SafeSpace is available as a desktop app -{" "}
         <a href="/download" className="underline font-bold">
           Download for {platformLabels[os] || "your OS"}
         </a>

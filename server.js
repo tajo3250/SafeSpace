@@ -316,12 +316,12 @@ app.get("/api/desktop-version", async (req, res) => {
   }
 });
 
-// Download endpoint — redirects to latest GitHub Release asset
+// Download endpoint - redirects to latest GitHub Release asset
 app.get("/api/download/:platform", async (req, res) => {
   const platform = req.params.platform;
   const patterns = {
     windows: /\.exe$/i,
-    mac: /\.dmg$/i,
+    mac: /\.zip$/i,
     linux: /\.AppImage$/i,
   };
 

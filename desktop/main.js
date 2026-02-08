@@ -8,7 +8,7 @@ app.commandLine.appendSwitch("disable-renderer-backgrounding");
 // Reduce idle GPU usage
 app.commandLine.appendSwitch("disable-background-timer-throttling");
 
-// The hosted SafeSpace URL — override with SAFESPACE_URL env var if needed
+// The hosted SafeSpace URL - override with SAFESPACE_URL env var if needed
 const APP_URL = process.env.SAFESPACE_URL || "https://safespace.hxn1.dev";
 
 let mainWindow = null;
@@ -99,7 +99,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on("error", () => {
-    // Silently ignore update errors — the app still works fine without updates
+    // Silently ignore update errors - the app still works fine without updates
   });
 
   // Check for updates right away, then every 30 minutes
