@@ -36,10 +36,6 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install Python setuptools (macOS)
-        if: matrix.platform == 'mac'
-        run: pip3 install setuptools
-
       - name: Sync version with tag
         working-directory: desktop
         shell: bash
@@ -54,33 +50,7 @@ jobs:
 
       - name: Build Electron app
         working-directory: desktop
-        run: npx electron-builder ${{ matrix.build_args }} --publish never
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-
-      - name: Ad-hoc sign macOS app
-        if: matrix.platform == 'mac'
-        working-directory: desktop/dist
-        run: |
-          ZIP=$(ls SafeSpace-*-universal-mac.zip 2>/dev/null || ls *.zip | head -1)
-          echo "Found zip: $ZIP"
-          mkdir -p _tmp
-          ditto -xk "$ZIP" _tmp
-          APP=$(find _tmp -name "*.app" -maxdepth 2 | head -1)
-          echo "Signing: $APP"
-          codesign --force --deep -s - "$APP"
-          rm "$ZIP"
-          ditto -ck --sequesterRsrc --keepParent "$APP" "$ZIP"
-          rm -rf _tmp
-
-      - name: Upload release assets
-        working-directory: desktop/dist
-        shell: bash
-        run: |
-          TAG="${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0)}"
-          for f in *.exe *.zip *.AppImage *.yml *.yaml; do
-            [ -f "$f" ] && gh release upload "$TAG" "$f" --clobber || true
-          done
+        run: npx electron-builder ${{ matrix.build_args }} --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

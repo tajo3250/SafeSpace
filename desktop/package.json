@@ -52,12 +52,7 @@
       "allowToChangeInstallationDirectory": true
     },
     "mac": {
-      "target": [
-        {
-          "target": "zip",
-          "arch": ["universal"]
-        }
-      ],
+      "target": "zip",
       "icon": "icons/icon.png",
       "category": "public.app-category.social-networking"
     },
