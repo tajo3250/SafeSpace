@@ -1,6 +1,6 @@
 {
   "name": "safespace-desktop",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "SafeSpace — Encrypted messaging, on your desktop.",
   "main": "main.js",
   "homepage": "https://safespace.hxn1.dev",
