@@ -8,15 +8,18 @@ const cleanString = (value) => {
 
 const isHttpUrl = (value) => /^https?:\/\//i.test(value);
 
+const truncStr = (val, max) =>
+  typeof val === "string" && val.length > max ? val.slice(0, max) : val;
+
 const normalizeGifMeta = (gif) => {
   if (!gif || typeof gif !== "object") return null;
-  const provider = cleanString(gif.provider).toLowerCase();
-  const id = cleanString(gif.id);
-  const url = cleanString(gif.url);
+  const provider = cleanString(gif.provider).toLowerCase().slice(0, 64);
+  const id = cleanString(gif.id).slice(0, 255);
+  const url = cleanString(gif.url).slice(0, 2048);
   if (!provider || !id || !url) return null;
 
-  const previewUrl = cleanString(gif.previewUrl);
-  const title = cleanString(gif.title);
+  const previewUrl = cleanString(gif.previewUrl).slice(0, 2048);
+  const title = cleanString(gif.title).slice(0, 255);
   const width = Number.isFinite(gif.width) ? gif.width : null;
   const height = Number.isFinite(gif.height) ? gif.height : null;
 
@@ -40,13 +43,13 @@ export function buildMessagePayload({ text, attachments }) {
     .filter(
       (att) =>
         att &&
-        ((typeof att.dataUrl === "string" && att.dataUrl.startsWith("data:image/")) ||
-          (typeof att.url === "string" && isHttpUrl(att.url)))
+        ((typeof att.dataUrl === "string" && att.dataUrl.startsWith("data:")) ||
+          (typeof att.url === "string" && (isHttpUrl(att.url) || att.url.startsWith("/uploads/"))))
     )
     .map((att) => {
       const base = {
         id: att.id || "",
-        type: att.type === "gif" ? "gif" : "image",
+        type: att.type === "gif" ? "gif" : att.type === "file" ? "file" : "image",
         name: att.name || "",
         mime: att.mime || "",
         size: Number.isFinite(att.size) ? att.size : 0,
@@ -61,7 +64,7 @@ export function buildMessagePayload({ text, attachments }) {
         base.dataUrl = att.dataUrl;
       }
 
-      if (typeof att.url === "string" && isHttpUrl(att.url)) {
+      if (typeof att.url === "string" && (isHttpUrl(att.url) || att.url.startsWith("/uploads/"))) {
         base.url = att.url;
       }
 
@@ -107,34 +110,36 @@ export function parseMessagePayload(rawText) {
     .filter(
       (att) =>
         att &&
-        (att.type === "image" || att.type === "gif") &&
-        ((typeof att.dataUrl === "string" && att.dataUrl.startsWith("data:image/")) ||
-          (typeof att.url === "string" && isHttpUrl(att.url)))
+        (att.type === "image" || att.type === "gif" || att.type === "file") &&
+        ((typeof att.dataUrl === "string" && att.dataUrl.startsWith("data:")) ||
+          (typeof att.url === "string" && (isHttpUrl(att.url) || att.url.startsWith("/uploads/"))))
     )
     .map((att) => {
+      const hasUrl = typeof att.url === "string" && (isHttpUrl(att.url) || att.url.startsWith("/uploads/"));
       const base = {
-        id: att.id || "",
-        type: att.type === "gif" ? "gif" : "image",
-        name: typeof att.name === "string" ? att.name : "",
-        mime: typeof att.mime === "string" ? att.mime : "",
+        id: truncStr(att.id || "", 255),
+        type: att.type === "gif" ? "gif" : att.type === "file" ? "file" : "image",
+        name: truncStr(typeof att.name === "string" ? att.name : "", 255),
+        mime: truncStr(typeof att.mime === "string" ? att.mime : "", 255),
         size: Number.isFinite(att.size) ? att.size : 0,
         width: Number.isFinite(att.width) ? att.width : null,
         height: Number.isFinite(att.height) ? att.height : null,
         encrypted: !!att.encrypted,
-        fileKey: typeof att.fileKey === "string" ? att.fileKey : undefined,
-        iv: typeof att.iv === "string" ? att.iv : undefined,
+        fileKey: truncStr(typeof att.fileKey === "string" ? att.fileKey : undefined, 128),
+        iv: truncStr(typeof att.iv === "string" ? att.iv : undefined, 128),
       };
 
-      if (typeof att.dataUrl === "string" && att.dataUrl.startsWith("data:image/")) {
+      // Only keep dataUrl if no server URL is available (prevents bloated payloads)
+      if (!hasUrl && typeof att.dataUrl === "string" && att.dataUrl.startsWith("data:image/")) {
         base.dataUrl = att.dataUrl;
       }
 
-      if (typeof att.url === "string" && isHttpUrl(att.url)) {
-        base.url = att.url;
+      if (hasUrl) {
+        base.url = truncStr(att.url, 2048);
       }
 
       if (typeof att.previewUrl === "string" && isHttpUrl(att.previewUrl)) {
-        base.previewUrl = att.previewUrl;
+        base.previewUrl = truncStr(att.previewUrl, 2048);
       }
 
       const gifMeta = normalizeGifMeta(att.gif);

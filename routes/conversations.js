@@ -1,6 +1,8 @@
 // routes/conversations.js — DMs, groups, membership, admins, ownership, disband, message delete, E2EE group keys
 
 const express = require("express");
+const path = require("path");
+const fs = require("fs");
 
 const {
   users,
@@ -11,6 +13,8 @@ const {
   isGroupManager, // kept for compatibility, but we enforce permissions locally too
 } = require("../data/store");
 const { getUserFromRequest } = require("../utils/auth");
+
+const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
 
 const router = express.Router();
 
@@ -898,6 +902,34 @@ router.delete("/api/conversations/:id", (req, res) => {
     return res.status(403).json({ message: "Only the group creator can disband this group" });
   }
 
+  // Clean up uploaded files from all messages before removing conversation
+  if (Array.isArray(conv.messages)) {
+    const uploadsDirResolved = path.resolve(UPLOAD_DIR) + path.sep;
+    const safeFilenameRegex = /^[a-zA-Z0-9._-]+$/;
+    const uploadRegex = /\/uploads\/([a-zA-Z0-9._-]+)/g;
+
+    const deleteFile = (filename) => {
+      if (!filename || !safeFilenameRegex.test(filename) || filename.includes("..")) return;
+      const filePath = path.resolve(UPLOAD_DIR, filename);
+      if (!filePath.startsWith(uploadsDirResolved)) return;
+      fs.unlink(filePath, () => {});
+    };
+
+    for (const msg of conv.messages) {
+      // Primary: use fileRefs array (works for E2EE messages)
+      if (Array.isArray(msg.fileRefs)) {
+        for (const f of msg.fileRefs) deleteFile(f);
+      }
+      // Fallback: regex on text (works for legacy non-encrypted messages)
+      const text = msg.text || "";
+      let match;
+      while ((match = uploadRegex.exec(text)) !== null) {
+        deleteFile(match[1]);
+      }
+      uploadRegex.lastIndex = 0;
+    }
+  }
+
   const deletedId = conv.id;
   conversations.splice(idx, 1);
   saveConversations();
@@ -984,8 +1016,30 @@ router.delete("/api/conversations/:id/messages/:messageId", (req, res) => {
     return res.status(403).json({ message: "You can only delete your own messages" });
   }
 
+  // Collect uploaded file references for cleanup
+  const uploadFilenames = [];
+  // Primary: use fileRefs array (works for E2EE messages)
+  if (Array.isArray(msg.fileRefs)) {
+    uploadFilenames.push(...msg.fileRefs);
+  }
+  // Fallback: regex on text (works for legacy non-encrypted messages)
+  const text = msg.text || "";
+  const uploadRegex = /\/uploads\/([a-zA-Z0-9._-]+)/g;
+  let match;
+  while ((match = uploadRegex.exec(text)) !== null) {
+    uploadFilenames.push(match[1]);
+  }
+
   conv.messages.splice(idx, 1);
   saveConversations();
+
+  // Clean up uploaded files from disk (best-effort, non-blocking)
+  for (const filename of uploadFilenames) {
+    if (filename.includes("..") || filename.includes("/") || filename.includes("\\")) continue;
+    const filePath = path.resolve(UPLOAD_DIR, filename);
+    if (!filePath.startsWith(path.resolve(UPLOAD_DIR) + path.sep)) continue;
+    fs.unlink(filePath, () => {});
+  }
 
   const io = req.app.get("io");
   if (io) {

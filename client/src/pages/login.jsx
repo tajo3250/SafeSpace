@@ -5,6 +5,7 @@ import { useNavigate, Link } from "react-router-dom";
 import { API_BASE } from "../config";
 import BrandHeader from "../components/brand/BrandHeader";
 import * as E2EE from "../utils/e2ee";
+import { setAuth } from "../utils/authStorage";
 
 // --- E2EE key bundle helpers (ciphertext-only backup) ---
 const E2EE_LOCAL_KEY_PREFIX = "e2eeKeyPair:";
@@ -307,6 +308,7 @@ async function ensureE2EEKeysAfterLogin({ token, userId, password }) {
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
@@ -321,8 +323,7 @@ export default function Login() {
       const data = await res.json();
       if (!res.ok) return alert(data.message);
 
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(data.user));
+      setAuth(data.token, data.user, rememberMe);
 
       // E2EE: restore/create stable keys BEFORE entering chat (prevents key resets on new domains)
       try {
@@ -344,7 +345,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center px-4 py-10">
+    <div className="min-h-[calc(100dvh-var(--ss-banner-h,0px))] flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm rounded-2xl glass-panel p-6 shadow-[0_30px_120px_-70px_rgba(0,0,0,0.9)]">
         <BrandHeader title="Welcome back" />
 
@@ -366,6 +367,16 @@ export default function Login() {
             onChange={(e) => setPassword(e.target.value)}
             required
           />
+
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="w-4 h-4 rounded border-white/20 bg-white/5 accent-[rgb(var(--ss-accent-rgb))]"
+            />
+            <span className="text-sm text-slate-300">Remember me</span>
+          </label>
 
           <button
             type="submit"

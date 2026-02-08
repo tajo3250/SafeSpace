@@ -14,6 +14,9 @@ node_modules/
 # client build output
 client/dist/
 
+# desktop build output
+desktop/dist/
+
 # environment variables
 .env
 .env.local

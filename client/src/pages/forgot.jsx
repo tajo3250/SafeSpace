@@ -17,7 +17,7 @@ export default function Forgot() {
   };
 
   return (
-    <div className="min-h-[100dvh] flex items-center justify-center px-4 py-10">
+    <div className="min-h-[calc(100dvh-var(--ss-banner-h,0px))] flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm rounded-2xl glass-panel p-6 shadow-[0_30px_120px_-70px_rgba(0,0,0,0.9)]">
         <BrandHeader title="Reset password" subtitle="We will email you a reset link." />
 

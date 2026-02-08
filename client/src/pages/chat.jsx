@@ -19,12 +19,15 @@ import { io } from "socket.io-client";
 import { useNavigate } from "react-router-dom";
 
 import { API_BASE, SOCKET_URL } from "../config";
+import { getToken, clearAuth } from "../utils/authStorage";
 import ChatSidebar from "../components/chat/ChatSidebar";
 import MessageList from "../components/chat/MessageList";
 import MessageInput from "../components/chat/MessageInput";
 import GifPicker from "../components/chat/GifPicker";
+import EmojiPicker from "../components/chat/EmojiPicker";
 import * as E2EE from "../utils/e2ee";
 import { buildMessagePayload, parseMessagePayload } from "../utils/messagePayload";
+import { resolveAttachmentUrl } from "../utils/attachmentUrls";
 import {
   getGifFromMessageText,
   isGifAttachment,
@@ -35,7 +38,7 @@ import {
 const socket = io(SOCKET_URL, { autoConnect: false });
 
 const MAX_MESSAGE_CHARS = 4000;
-const MAX_IMAGE_BYTES = 600 * 1024 * 1024;
+const MAX_FILE_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB upload limit
 const MAX_SOCKET_MESSAGE_BYTES = 20 * 1024 * 1024;
 
 // -----------------------
@@ -63,6 +66,7 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [pendingImages, setPendingImages] = useState([]);
   const [isGifPickerOpen, setIsGifPickerOpen] = useState(false);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [gifQuery, setGifQuery] = useState("");
   const [gifTab, setGifTab] = useState("search");
   const [gifResults, setGifResults] = useState([]);
@@ -190,6 +194,8 @@ export default function Chat() {
 
       payload.attachments.forEach((att) => {
         if (att.encrypted && att.url && att.fileKey && att.iv) {
+          // Guard against maliciously oversized key material
+          if (att.fileKey.length > 128 || att.iv.length > 128) return;
           const cacheKey = att.id || att.url;
           if (attachmentBlobUrls[cacheKey]) return;
           if (attachmentDecryptionQueueRef.current.has(cacheKey)) return;
@@ -198,33 +204,25 @@ export default function Chat() {
 
           (async () => {
             try {
-              let targetUrl = att.url;
-              // Handle relative URLs (new format) - ensure we hit the API server
-              if (targetUrl.startsWith("/")) {
-                targetUrl = `${API_BASE}${targetUrl}`;
-              }
-
-              // Handle mixed content (old format or dev config mismatch)
-              // If we are on HTTPS but the URL is HTTP, the browser will block it.
-              // We attempt to upgrade to HTTPS.
+              let targetUrl = resolveAttachmentUrl(att.url);
               if (window.location.protocol === "https:" && targetUrl.startsWith("http:")) {
                 targetUrl = targetUrl.replace("http:", "https:");
               }
 
               const res = await fetch(targetUrl);
-              if (!res.ok) throw new Error("Failed to fetch image");
+              if (!res.ok) throw new Error("Failed to fetch encrypted attachment");
               const encryptedBlob = await res.arrayBuffer();
 
               const key = await E2EE.importKeyFromString(att.fileKey);
               const iv = E2EE.base64ToBytes(att.iv);
               const decryptedBuffer = await E2EE.decryptFile(encryptedBlob, key, iv);
 
-              const blob = new Blob([decryptedBuffer], { type: att.mime || "image/jpeg" });
+              const blob = new Blob([decryptedBuffer], { type: att.mime || "application/octet-stream" });
               const blobUrl = URL.createObjectURL(blob);
 
               setAttachmentBlobUrls((prev) => ({ ...prev, [cacheKey]: blobUrl }));
             } catch (e) {
-              console.error("Failed to decrypt image attachment", e);
+              console.error("Failed to decrypt attachment", e);
             } finally {
               attachmentDecryptionQueueRef.current.delete(cacheKey);
             }
@@ -233,6 +231,56 @@ export default function Chat() {
       });
     });
   }, [messagesByConversation, selectedConversationId, decryptedMessages, attachmentBlobUrls]);
+
+  // Decrypt encrypted attachments from media tab messages (independent of main chat)
+  useEffect(() => {
+    for (const [, msg] of mediaMessagesMap.entries()) {
+      if (!msg || !msg.id) continue;
+      const raw = decryptedMessages[msg.id] || msg.text;
+      if (!raw) continue;
+
+      const payload = parseMessagePayload(String(raw));
+      if (!payload || !payload.attachments) continue;
+
+      payload.attachments.forEach((att) => {
+        if (att.encrypted && att.url && att.fileKey && att.iv) {
+          // Guard against maliciously oversized key material
+          if (att.fileKey.length > 128 || att.iv.length > 128) return;
+          const cacheKey = att.id || att.url;
+          if (attachmentBlobUrls[cacheKey]) return;
+          if (attachmentDecryptionQueueRef.current.has(cacheKey)) return;
+
+          attachmentDecryptionQueueRef.current.add(cacheKey);
+
+          (async () => {
+            try {
+              let targetUrl = resolveAttachmentUrl(att.url);
+              if (window.location.protocol === "https:" && targetUrl.startsWith("http:")) {
+                targetUrl = targetUrl.replace("http:", "https:");
+              }
+
+              const res = await fetch(targetUrl);
+              if (!res.ok) throw new Error("Failed to fetch encrypted attachment");
+              const encryptedBlob = await res.arrayBuffer();
+
+              const key = await E2EE.importKeyFromString(att.fileKey);
+              const iv = E2EE.base64ToBytes(att.iv);
+              const decryptedBuffer = await E2EE.decryptFile(encryptedBlob, key, iv);
+
+              const blob = new Blob([decryptedBuffer], { type: att.mime || "application/octet-stream" });
+              const blobUrl = URL.createObjectURL(blob);
+
+              setAttachmentBlobUrls((prev) => ({ ...prev, [cacheKey]: blobUrl }));
+            } catch (e) {
+              console.error("Failed to decrypt media tab attachment", e);
+            } finally {
+              attachmentDecryptionQueueRef.current.delete(cacheKey);
+            }
+          })();
+        }
+      });
+    }
+  }, [mediaMessagesMap, decryptedMessages, attachmentBlobUrls]);
 
   const navigate = useNavigate();
   const selectedConversationRef = useRef(selectedConversationId);
@@ -291,10 +339,11 @@ export default function Chat() {
       if (attachments.length > 0) {
         attachments.forEach(att => {
           // Only valid images
-          if (att.processedUrl || att.url || att.dataUrl) {
+          const resolvedUrl = resolveAttachmentUrl(att.processedUrl || att.url);
+          if (resolvedUrl || att.dataUrl) {
             items.push({
               id: att.id || msg.id + "-" + Math.random(),
-              src: attachmentBlobUrls[att.id || att.url] || att.processedUrl || att.url || att.dataUrl,
+              src: attachmentBlobUrls[att.id || att.url] || resolvedUrl || att.dataUrl,
               name: att.name || "Image",
               size: att.size,
               width: att.width,
@@ -456,97 +505,127 @@ export default function Chat() {
       if (list.length === 0) return;
 
       const valid = [];
-      let sawNonImage = false;
       let oversizeCount = 0;
 
       for (const file of list) {
-        const isImage = file.type && file.type.startsWith("image/");
-        if (!isImage) {
-          sawNonImage = true;
-          continue;
-        }
-        if (file.size > MAX_IMAGE_BYTES) {
+        if (file.size > MAX_FILE_BYTES) {
           oversizeCount += 1;
           continue;
         }
         valid.push(file);
       }
 
-      if (sawNonImage) {
-        alert("Only image files are supported right now.");
-      }
       if (oversizeCount > 0) {
-        const label = oversizeCount > 1 ? "Images exceed" : "Image exceeds";
-        alert(`${label} ${formatBytes(MAX_IMAGE_BYTES)} limit.`);
+        const label = oversizeCount > 1 ? "Files exceed" : "File exceeds";
+        alert(`${label} ${formatBytes(MAX_FILE_BYTES)} limit.`);
       }
       if (valid.length === 0) return;
 
       const conv = conversations.find((c) => c.id === selectedConversationId);
       const isE2EE = conv && E2EE.isConversationE2EE(conv);
 
+      const uploadFile = async (id, file, isEncrypted) => {
+        try {
+          let uploadBody;
+          let fileKeyStr = null;
+          let ivStr = null;
+
+          if (isEncrypted) {
+            const fileBytes = await file.arrayBuffer();
+            const key = await E2EE.generateFileKey();
+            const { encryptedBuffer, iv } = await E2EE.encryptFile(fileBytes, key);
+
+            const blob = new Blob([encryptedBuffer], { type: "application/octet-stream" });
+            uploadBody = new FormData();
+            uploadBody.append("file", blob, (file.name || "file") + ".enc");
+
+            fileKeyStr = await E2EE.exportKeyToString(key);
+            ivStr = E2EE.bytesToBase64(iv);
+          } else {
+            uploadBody = new FormData();
+            uploadBody.append("file", file);
+          }
+
+          const token = getToken();
+          const uploadResult = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open("POST", `${API_BASE}/api/upload`);
+            xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable) {
+                const pct = Math.round((e.loaded / e.total) * 100);
+                setPendingImages((prev) =>
+                  prev.map((item) =>
+                    item.id === id ? { ...item, progress: pct } : item
+                  )
+                );
+              }
+            };
+
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                  resolve(JSON.parse(xhr.responseText));
+                } catch {
+                  reject(new Error("Upload response parse error"));
+                }
+              } else {
+                let msg = "Upload failed";
+                try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+                reject(new Error(msg));
+              }
+            };
+
+            xhr.onerror = () => reject(new Error("Upload failed"));
+            xhr.send(uploadBody);
+          });
+
+          return { url: uploadResult.url, fileKey: fileKeyStr, iv: ivStr };
+        } catch (e) {
+          throw e;
+        }
+      };
+
       for (const file of valid) {
         const id = makeImageId();
+        const isImage = file.type && file.type.startsWith("image/");
         const draft = {
           id,
-          name: file.name || "image",
-          mime: file.type || "image/*",
+          name: file.name || "file",
+          mime: file.type || "application/octet-stream",
           size: file.size,
+          type: isImage ? "image" : "file",
           status: "loading",
+          progress: 0,
           dataUrl: "",
           width: null,
           height: null,
           url: null,
           fileKey: null,
           iv: null,
-          encrypted: isE2EE
+          encrypted: isE2EE,
+          file, // Keep reference for retry
         };
         setPendingImages((prev) => [...prev, draft]);
 
         (async () => {
           try {
-            // 1. Generate local preview
-            const dataUrl = await readFileAsDataUrl(file);
-            const meta = await readImageMeta(dataUrl);
+            let dataUrl = "";
+            let meta = { width: null, height: null };
 
-            // 2. Prepare upload
-            let uploadBody;
-            let fileKeyStr = null;
-            let ivStr = null;
-
-            if (isE2EE) {
-              // Encrypt
-              const fileBytes = await file.arrayBuffer();
-              const key = await E2EE.generateFileKey();
-              const { encryptedBuffer, iv } = await E2EE.encryptFile(fileBytes, key);
-
-              const blob = new Blob([encryptedBuffer], { type: "application/octet-stream" });
-              uploadBody = new FormData();
-              uploadBody.append("file", blob, (file.name || "image") + ".enc");
-
-              fileKeyStr = await E2EE.exportKeyToString(key);
-              ivStr = E2EE.bytesToBase64(iv);
-            } else {
-              // Plain upload
-              uploadBody = new FormData();
-              uploadBody.append("file", file);
+            if (isImage) {
+              dataUrl = await readFileAsDataUrl(file);
+              meta = await readImageMeta(dataUrl);
+              // Update preview immediately
+              setPendingImages((prev) =>
+                prev.map((item) =>
+                  item.id === id ? { ...item, dataUrl, width: meta.width, height: meta.height } : item
+                )
+              );
             }
 
-            // 3. Upload
-            const token = localStorage.getItem("token");
-            const res = await fetch(`${API_BASE}/api/upload`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`
-              },
-              body: uploadBody
-            });
-
-            if (!res.ok) {
-              throw new Error("Upload failed");
-            }
-
-            const data = await res.json();
-            const url = data.url;
+            const result = await uploadFile(id, file, isE2EE);
 
             setPendingImages((prev) =>
               prev.map((item) =>
@@ -557,32 +636,145 @@ export default function Chat() {
                     width: meta.width,
                     height: meta.height,
                     status: "ready",
-                    url,
-                    fileKey: fileKeyStr,
-                    iv: ivStr
+                    progress: 100,
+                    url: result.url,
+                    fileKey: result.fileKey,
+                    iv: result.iv
                   }
                   : item
               )
             );
           } catch (e) {
-            console.error("Failed to process/upload image", e);
-            setPendingImages((prev) => prev.filter((item) => item.id !== id));
-            alert("Failed to process image. Please try again.");
+            console.error("Failed to process/upload file", e);
+            setPendingImages((prev) =>
+              prev.map((item) =>
+                item.id === id
+                  ? { ...item, status: "error", error: e.message || "Upload failed" }
+                  : item
+              )
+            );
           }
         })();
       }
     },
-    [formatBytes, MAX_IMAGE_BYTES, conversations, selectedConversationId]
+    [formatBytes, conversations, selectedConversationId]
   );
+
+  const retryPendingUpload = useCallback((id) => {
+    setPendingImages((prev) => {
+      const item = prev.find((p) => p.id === id);
+      if (!item || !item.file || item.status !== "error") return prev;
+      return prev.map((p) => p.id === id ? { ...p, status: "loading", progress: 0, error: null } : p);
+    });
+
+    // Small delay to let state update, then re-upload
+    setTimeout(() => {
+      setPendingImages((prev) => {
+        const item = prev.find((p) => p.id === id);
+        if (!item || !item.file || item.status !== "loading") return prev;
+
+        const conv = conversations.find((c) => c.id === selectedConversationId);
+        const isE2EE = conv && E2EE.isConversationE2EE(conv);
+
+        (async () => {
+          try {
+            let uploadBody;
+            let fileKeyStr = null;
+            let ivStr = null;
+
+            if (isE2EE) {
+              const fileBytes = await item.file.arrayBuffer();
+              const key = await E2EE.generateFileKey();
+              const { encryptedBuffer, iv } = await E2EE.encryptFile(fileBytes, key);
+              const blob = new Blob([encryptedBuffer], { type: "application/octet-stream" });
+              uploadBody = new FormData();
+              uploadBody.append("file", blob, (item.file.name || "file") + ".enc");
+              fileKeyStr = await E2EE.exportKeyToString(key);
+              ivStr = E2EE.bytesToBase64(iv);
+            } else {
+              uploadBody = new FormData();
+              uploadBody.append("file", item.file);
+            }
+
+            const token = getToken();
+            const uploadResult = await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open("POST", `${API_BASE}/api/upload`);
+              xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+              xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                  const pct = Math.round((e.loaded / e.total) * 100);
+                  setPendingImages((p) =>
+                    p.map((x) => x.id === id ? { ...x, progress: pct } : x)
+                  );
+                }
+              };
+              xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  try { resolve(JSON.parse(xhr.responseText)); }
+                  catch { reject(new Error("Upload response parse error")); }
+                } else {
+                  let msg = "Upload failed";
+                  try { msg = JSON.parse(xhr.responseText).error || msg; } catch {}
+                  reject(new Error(msg));
+                }
+              };
+              xhr.onerror = () => reject(new Error("Upload failed"));
+              xhr.send(uploadBody);
+            });
+
+            setPendingImages((p) =>
+              p.map((x) =>
+                x.id === id
+                  ? { ...x, status: "ready", progress: 100, url: uploadResult.url, fileKey: fileKeyStr, iv: ivStr }
+                  : x
+              )
+            );
+          } catch (e) {
+            console.error("Retry upload failed", e);
+            setPendingImages((p) =>
+              p.map((x) =>
+                x.id === id ? { ...x, status: "error", error: e.message || "Upload failed" } : x
+              )
+            );
+          }
+        })();
+
+        return prev;
+      });
+    }, 50);
+  }, [conversations, selectedConversationId]);
+
+  const deleteUploadedFile = useCallback((url) => {
+    if (!url || typeof url !== "string") return;
+    const match = url.match(/\/uploads\/([^/?#]+)/);
+    if (!match) return;
+    const filename = match[1];
+    const token = getToken();
+    if (!token) return;
+    fetch(`${API_BASE}/api/upload/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {});
+  }, []);
 
   const removePendingImage = useCallback((id) => {
     if (!id) return;
-    setPendingImages((prev) => prev.filter((item) => item.id !== id));
-  }, []);
+    setPendingImages((prev) => {
+      const item = prev.find((img) => img.id === id);
+      if (item && item.url) deleteUploadedFile(item.url);
+      return prev.filter((img) => img.id !== id);
+    });
+  }, [deleteUploadedFile]);
 
   const clearPendingImages = useCallback(() => {
-    setPendingImages([]);
-  }, []);
+    setPendingImages((prev) => {
+      for (const item of prev) {
+        if (item.url) deleteUploadedFile(item.url);
+      }
+      return [];
+    });
+  }, [deleteUploadedFile]);
 
   const normalizeGifForFavorite = useCallback((gif) => {
     if (!gif) return null;
@@ -609,11 +801,25 @@ export default function Chat() {
     setGifSendingKey("");
   }, []);
 
+  const openEmojiPicker = useCallback(() => {
+    setIsEmojiPickerOpen(true);
+  }, []);
+
+  const closeEmojiPicker = useCallback(() => {
+    setIsEmojiPickerOpen(false);
+  }, []);
+
+  const handleSelectEmoji = useCallback((emoji) => {
+    if (!emoji) return;
+    setInput((prev) => prev + emoji);
+    setIsEmojiPickerOpen(false);
+  }, []);
+
   const toggleGifFavorite = useCallback(
     async (gif) => {
       const normalized = normalizeGifForFavorite(gif);
       if (!normalized) return;
-      const token = localStorage.getItem("token");
+      const token = getToken();
       if (!token) return;
 
       const key = gifKey(normalized);
@@ -675,7 +881,7 @@ export default function Chat() {
 
   useEffect(() => {
     if (!currentUser) return;
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
     let cancelled = false;
 
@@ -705,7 +911,7 @@ export default function Chat() {
 
   useEffect(() => {
     if (!isGifPickerOpen || gifTab !== "search") return;
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     const term = gifQuery.trim();
@@ -774,9 +980,9 @@ export default function Chat() {
       const bytes = getPayloadByteSize(text);
       if (bytes <= MAX_SOCKET_MESSAGE_BYTES) return true;
       alert(
-        `Image payload is ${formatBytes(bytes)} and exceeds the realtime limit of ${formatBytes(
+        `Message payload is ${formatBytes(bytes)} and exceeds the realtime limit of ${formatBytes(
           MAX_SOCKET_MESSAGE_BYTES
-        )}. Try a smaller image.`
+        )}. Try removing some attachments.`
       );
       return false;
     },
@@ -819,7 +1025,7 @@ export default function Chat() {
 
   useEffect(() => {
     if (!editingMessageId) return;
-    setPendingImages([]);
+    clearPendingImages();
   }, [editingMessageId]);
 
   const handleReplyToMessage = (msg, previewText = null) => {
@@ -980,7 +1186,12 @@ export default function Chat() {
 
     let textToSend = trimmed;
     if (hasAttachments) {
-      const payload = buildMessagePayload({ text: trimmed, attachments: safeAttachments });
+      // Strip inline base64 dataUrls and File objects from attachments (files are already uploaded by URL)
+      const strippedAttachments = safeAttachments.map((att) => {
+        const { dataUrl, file, error, ...rest } = att;
+        return rest;
+      });
+      const payload = buildMessagePayload({ text: trimmed, attachments: strippedAttachments });
       if (!payload) {
         alert("Could not prepare attachment payload. Please try again.");
         return;
@@ -1020,11 +1231,24 @@ export default function Chat() {
       return;
     }
 
+    // Extract plain upload filenames for server-side file tracking (not sensitive — filenames are random UUIDs)
+    const fileRefs = [];
+    if (hasAttachments) {
+      const uploadRegex = /\/uploads\/([a-zA-Z0-9._-]+)/;
+      for (const att of safeAttachments) {
+        if (att.url && typeof att.url === "string") {
+          const m = att.url.match(uploadRegex);
+          if (m) fileRefs.push(m[1]);
+        }
+      }
+    }
+
     socket.emit("chat:send", {
       conversationId: selectedConversationId || "global",
       text: textToSend,
       replyToId: replyToId || null,
       replyToPreview,
+      fileRefs: fileRefs.length > 0 ? fileRefs : undefined,
     });
 
     if (clearInput) setInput("");
@@ -1183,8 +1407,8 @@ export default function Chat() {
 
   // ---------- INITIAL AUTH + SOCKET + DATA ----------
   useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    const token = localStorage.getItem("token");
+    const storedUser = sessionStorage.getItem("user") || localStorage.getItem("user");
+    const token = getToken();
 
     if (!storedUser || !token) {
       navigate("/");
@@ -1412,6 +1636,17 @@ export default function Chat() {
       setLastActive((prev) => ({ ...prev, [conversationId]: Date.now() }));
     });
 
+    socket.on("chat:reaction-updated", ({ conversationId, messageId, reactions } = {}) => {
+      if (!conversationId || !messageId) return;
+      setMessagesByConversation((prev) => {
+        const arr = prev[conversationId] || [];
+        const next = arr.map((m) =>
+          String(m.id) === String(messageId) ? { ...m, reactions } : m
+        );
+        return { ...prev, [conversationId]: next };
+      });
+    });
+
     socket.on("conversation:created", (conv) => {
       if (!conv || !conv.id) return;
 
@@ -1620,6 +1855,7 @@ export default function Chat() {
       socket.off("chat:message");
       socket.off("chat:message-deleted");
       socket.off("chat:message-edited");
+      socket.off("chat:reaction-updated");
       socket.off("conversation:created");
       socket.off("conversation:update");
       socket.off("conversation:removed");
@@ -1660,7 +1896,7 @@ export default function Chat() {
           (await window.crypto.subtle.exportKey("jwk", keyPair.publicKey));
         myPublicJwkRef.current = publicJwk;
 
-        const token = localStorage.getItem("token");
+        const token = getToken();
         if (!token) return;
 
         await fetch(`${API_BASE}/api/users/keys`, {
@@ -1689,7 +1925,7 @@ export default function Chat() {
   useEffect(() => {
     if (!currentUser || !myKeyPair) return;
 
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     let cancelled = false;
@@ -2248,7 +2484,7 @@ export default function Chat() {
     if (!force && cache[userId]) return cache[userId];
     if (force) delete cache[userId];
 
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return null;
 
     try {
@@ -2400,29 +2636,55 @@ export default function Chat() {
       }
     }
 
-    if (!entry.ciphertext || !entry.iv || !entry.from) return null;
+    if (!entry.ciphertext || !entry.iv) return null;
+    if (!entry.senderPublicKey && !entry.from) return null;
 
-    const fromUserId = entry.from;
-    const wrapperJwk = await getUserPublicKeyJwk(fromUserId);
-    if (!wrapperJwk) throw new Error("Missing wrapper public key");
+    // Try embedded senderPublicKey first (reliable across key rotations),
+    // then fall back to fetching current key by userId (legacy `from` field).
+    const unwrapWithJwk = async (jwk) => {
+      const wrapperPublicKey = await window.crypto.subtle.importKey(
+        "jwk",
+        jwk,
+        { name: "ECDH", namedCurve: "P-256" },
+        true,
+        []
+      );
+      const wrapKey = await window.crypto.subtle.deriveKey(
+        { name: "ECDH", public: wrapperPublicKey },
+        myKeyPair.privateKey,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+      const keyStr = await E2EE.decryptWithAesGcm(entry, wrapKey);
+      return keyStr;
+    };
 
-    const wrapperPublicKey = await window.crypto.subtle.importKey(
-      "jwk",
-      wrapperJwk,
-      { name: "ECDH", namedCurve: "P-256" },
-      true,
-      []
-    );
+    let groupKeyString = null;
 
-    const wrapKey = await window.crypto.subtle.deriveKey(
-      { name: "ECDH", public: wrapperPublicKey },
-      myKeyPair.privateKey,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["encrypt", "decrypt"]
-    );
+    // Strategy 1: use embedded senderPublicKey (always correct, even after rotation)
+    if (entry.senderPublicKey) {
+      try {
+        groupKeyString = await unwrapWithJwk(entry.senderPublicKey);
+      } catch {
+        // embedded key failed, try fallback
+      }
+    }
 
-    const groupKeyString = await E2EE.decryptDmMessage(entry, wrapKey);
+    // Strategy 2: fetch current public key by userId (works if wrapper hasn't rotated)
+    if (!groupKeyString && entry.from) {
+      try {
+        const wrapperJwk = await getUserPublicKeyJwk(entry.from);
+        if (wrapperJwk) {
+          groupKeyString = await unwrapWithJwk(wrapperJwk);
+        }
+      } catch {
+        // server key fetch/decrypt failed
+      }
+    }
+
+    if (!groupKeyString) return null;
+
     const aesKey = await E2EE.importAesKeyFromGroupKeyString(groupKeyString);
 
     const record = { cryptoKey: aesKey, version, keyString: groupKeyString };
@@ -2444,7 +2706,7 @@ export default function Chat() {
     if (attempted[vKey]) return null;
     attempted[vKey] = true;
 
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return null;
 
     try {
@@ -2470,6 +2732,10 @@ export default function Chat() {
     if (!window.crypto || !window.crypto.subtle) {
       throw new Error("Web Crypto not available");
     }
+
+    const myPublicJwk =
+      myPublicJwkRef.current ||
+      (await window.crypto.subtle.exportKey("jwk", myKeyPair.publicKey));
 
     const result = {};
 
@@ -2497,9 +2763,12 @@ export default function Chat() {
         ["encrypt", "decrypt"]
       );
 
-      const payload = await E2EE.encryptDmMessage(groupKeyString, wrapKey);
+      const { ciphertext, iv } = await E2EE.encryptWithAesGcm(groupKeyString, wrapKey);
 
-      result[memberId] = { ...payload, from: currentUser.id };
+      // Embed senderPublicKey directly so decryption doesn't depend on the
+      // wrapper's *current* server key (which changes on key rotation).
+      // Keep `from` for backward compat with older clients.
+      result[memberId] = { ciphertext, iv, senderPublicKey: myPublicJwk, from: currentUser.id };
     }
 
     return result;
@@ -2605,7 +2874,7 @@ export default function Chat() {
       const missingVersions = Object.keys(missingByVersion);
       if (missingVersions.length === 0) return;
 
-      const token = localStorage.getItem("token");
+      const token = getToken();
       if (!token) return;
 
       // userId -> { [version]: encryptedKeyBlob }
@@ -2695,7 +2964,7 @@ export default function Chat() {
     setIsMediaLoading(true);
 
     try {
-      const token = localStorage.getItem("token");
+      const token = getToken();
       const beforeId = mediaCursorRef.current;
       const url = `${API_BASE}/api/conversations/${cid}/messages?limit=50${beforeId ? `&beforeId=${beforeId}` : ""}`;
 
@@ -2838,14 +3107,40 @@ export default function Chat() {
     }
   }, [isMediaLoading, hasMoreMedia, fetchMoreMedia]);
 
+  // Auto-fetch media when the media tab is opened and there are few items
+  useEffect(() => {
+    if (detailsTab === "media" && !isMediaLoading && hasMoreMedia && mediaItems.length < 12) {
+      fetchMoreMedia();
+    }
+  }, [detailsTab, isMediaLoading, hasMoreMedia, mediaItems.length, fetchMoreMedia]);
+
   // ---------- E2EE DECRYPTION EFFECT (DM + Group) ----------
+  // Retry-aware: uses a counter per message instead of a boolean flag.
+  // When key material changes (myKeyPair), counters are reset to allow fresh attempts.
+  const prevDecryptKeyPairRef = useRef(null);
+
   useEffect(() => {
     const conv = currentConversation;
     if (!conv || !E2EE.isConversationE2EE(conv)) return;
     if (!currentUser) return;
     if (!window.crypto || !window.crypto.subtle) return;
+    // Don't attempt decryption until our keypair is loaded
+    if (!myKeyPair) return;
+
+    // When key material changes, reset retry counters so we re-attempt all failed messages
+    if (prevDecryptKeyPairRef.current !== myKeyPair) {
+      prevDecryptKeyPairRef.current = myKeyPair;
+      // Reset only failed entries (counters > 0 but message not in decryptedMessages)
+      const queue = decryptQueueRef.current;
+      for (const id of Object.keys(queue)) {
+        if (queue[id] > 0 && !decryptedMessages[id]) {
+          delete queue[id];
+        }
+      }
+    }
 
     let cancelled = false;
+    const MAX_DECRYPT_RETRIES = 5;
 
     (async () => {
       try {
@@ -2915,7 +3210,7 @@ export default function Chat() {
             }
           }
 
-          // Fallback: if we have remoteId but no JWK in message (or JWK-based decryption failed), 
+          // Fallback: if we have remoteId but no JWK in message (or JWK-based decryption failed),
           // try fetching current public key from server. This works for legacy messages or when
           // the embedded key doesn't match (though it may fail if keys have rotated since sending).
           if (remoteId) {
@@ -2982,12 +3277,14 @@ export default function Chat() {
             continue;
           }
 
+          // Retry counter: skip if we've already retried too many times
+          const retryCount = decryptQueueRef.current[msg.id] || 0;
+          if (retryCount >= MAX_DECRYPT_RETRIES) continue;
+          decryptQueueRef.current[msg.id] = retryCount + 1;
+
           try {
             const parsed = JSON.parse(text);
             if (!parsed.e2ee) continue;
-
-            if (decryptQueueRef.current[msg.id]) continue;
-            decryptQueueRef.current[msg.id] = true;
 
             let decryptedText = null;
 
@@ -3035,7 +3332,8 @@ export default function Chat() {
                 continue;
               }
 
-              throw new Error("DM decrypt failed");
+              // Don't throw - just skip so retry can happen on next effect run
+              continue;
             }
 
             // GROUP:
@@ -3075,7 +3373,7 @@ export default function Chat() {
                   updates[msg.id] = fallback;
                   continue;
                 }
-                throw e;
+                // Don't throw - allow retry
               }
             }
 
@@ -3085,13 +3383,16 @@ export default function Chat() {
             }
             continue;
           } catch (e) {
-            console.error("E2EE decrypt failed", e);
-            updates[msg.id] = "[Encrypted message - unable to decrypt]";
+            console.debug("E2EE decrypt attempt", retryCount + 1, "failed for msg", msg.id);
+            // Don't store error text - allow retry on next effect run.
+            // The message will naturally show "Encrypted message..." placeholder.
           }
         }
 
         if (cancelled) return;
-        setDecryptedMessages((prev) => ({ ...prev, ...updates }));
+        if (Object.keys(updates).length > 0) {
+          setDecryptedMessages((prev) => ({ ...prev, ...updates }));
+        }
       } catch (e) {
         console.error("E2EE batch decrypt failed", e);
       }
@@ -3138,7 +3439,7 @@ export default function Chat() {
     setDetailsTab("details");
     setReplyToId(null);
     setEditingMessageId(null);
-    setPendingImages([]);
+    clearPendingImages();
     setHasNewWhileScrolledUp(false);
 
 
@@ -3236,12 +3537,12 @@ export default function Chat() {
     }
     const trimmed = input.trim();
     const readyImages = pendingImages.filter(
-      (item) => item.status === "ready" && item.dataUrl
+      (item) => item.status === "ready" && (item.dataUrl || item.url)
     );
     const hasProcessing = pendingImages.some((item) => item.status === "loading");
 
     if (hasProcessing) {
-      alert("Images are still processing. Please wait a moment.");
+      alert("Files are still uploading. Please wait a moment.");
       return;
     }
     await dispatchMessage({
@@ -3276,7 +3577,7 @@ export default function Chat() {
 
   const handleDeleteMessage = async (messageId) => {
     if (!messageId) return;
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     // Use current selected conversation ID since messages belong to it
@@ -3291,6 +3592,16 @@ export default function Chat() {
       if (!res.ok) {
         const data = await res.json();
         alert(data.message || "Failed to delete message");
+      } else {
+        // Clean up uploaded files referenced in the deleted message (client-side best-effort)
+        const raw = decryptedMessages[messageId];
+        if (raw && typeof raw === "string") {
+          const uploadRegex = /\/uploads\/([a-zA-Z0-9._-]+)/g;
+          let match;
+          while ((match = uploadRegex.exec(raw)) !== null) {
+            deleteUploadedFile(`/uploads/${match[1]}`);
+          }
+        }
       }
     } catch (e) {
       console.error("Delete failed", e);
@@ -3298,15 +3609,20 @@ export default function Chat() {
     }
   };
 
+  const handleReactToMessage = useCallback((messageId, emoji) => {
+    if (!messageId || !emoji || !socket) return;
+    const convId = selectedConversationId || "global";
+    socket.emit("chat:react", { conversationId: convId, messageId, emoji });
+  }, [selectedConversationId]);
+
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
+    clearAuth();
     socket.disconnect();
     navigate("/");
   };
 
   const startDmWith = async (username) => {
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     const res = await fetch(`${API_BASE}/api/conversations/dm`, {
@@ -3330,7 +3646,7 @@ export default function Chat() {
   };
 
   const submitCreateGroup = async () => {
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
     if (!currentUser) return;
 
@@ -3418,7 +3734,7 @@ export default function Chat() {
   // Group actions (atomic add/remove + key delivery/rotation)
   const addUserToCurrentGroup = async (userId) => {
     if (!currentConversation) return;
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     // If this is an encrypted group (keyVersion >= 1), we MUST deliver the group key on add.
@@ -3525,7 +3841,7 @@ export default function Chat() {
   const removeUserFromCurrentGroup = async (userId) => {
     if (!currentConversation) return;
 
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     let rotatedEncryptedKeys = null;
@@ -3590,7 +3906,7 @@ export default function Chat() {
 
   const leaveCurrentGroup = async () => {
     if (!currentConversation) return;
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     const res = await fetch(`${API_BASE}/api/conversations/${currentConversation.id}/leave`, {
@@ -3611,7 +3927,7 @@ export default function Chat() {
 
   const promoteToAdmin = async (userId) => {
     if (!currentConversation) return;
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     const res = await fetch(
@@ -3637,7 +3953,7 @@ export default function Chat() {
 
   const demoteAdmin = async (userId) => {
     if (!currentConversation) return;
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     const res = await fetch(
@@ -3665,7 +3981,7 @@ export default function Chat() {
     if (!currentConversation) return;
     if (!newOwnerId) return;
 
-    const token = localStorage.getItem("token");
+    const token = getToken();
     if (!token) return;
 
     const res = await fetch(
@@ -3702,8 +4018,9 @@ export default function Chat() {
 
   return (
     <div
-      className="relative h-[100dvh] w-full text-slate-100 overflow-hidden flex flex-col"
+      className="relative w-full text-slate-100 overflow-hidden flex flex-col"
       style={{
+        height: "calc(100dvh - var(--ss-banner-h, 0px))",
         backgroundColor: "#020308",
         backgroundImage:
           "radial-gradient(1000px 720px at 12% 0%, rgb(var(--ss-accent-rgb) / 0.36), transparent 62%), radial-gradient(900px 600px at 88% 8%, rgb(var(--ss-accent-rgb) / 0.24), transparent 64%), radial-gradient(800px 700px at 50% 120%, rgb(var(--ss-accent-rgb) / 0.14), transparent 60%)",
@@ -3840,6 +4157,7 @@ export default function Chat() {
               gifFavoriteKeys={gifFavoriteKeys}
               onToggleGifFavorite={toggleGifFavorite}
               attachmentBlobUrls={attachmentBlobUrls}
+              onReactToMessage={handleReactToMessage}
             />
 
             {/* Composer */}
@@ -3864,9 +4182,11 @@ export default function Chat() {
               onAddImages={addImages}
               removePendingImage={removePendingImage}
               clearPendingImages={clearPendingImages}
-              maxImageBytes={MAX_IMAGE_BYTES}
+              retryPendingUpload={retryPendingUpload}
+              maxImageBytes={MAX_FILE_BYTES}
               formatBytes={formatBytes}
               onOpenGifPicker={openGifPicker}
+              onOpenEmojiPicker={openEmojiPicker}
             />
           </section>
 
@@ -4007,16 +4327,19 @@ export default function Chat() {
                   </div>
                 )}
 
-                {isLoadingOlder && (
+                {isMediaLoading && (
                   <div className="flex justify-center py-4">
                     <div className="animate-spin h-5 w-5 border-2 border-[rgb(var(--ss-accent-rgb))] border-t-transparent rounded-full shadow-lg"></div>
                   </div>
                 )}
 
-                {!isLoadingOlder && hasMoreOlder && (
-                  <div className="mt-3 text-xs text-center text-slate-500">
-                    Scroll to load older media
-                  </div>
+                {!isMediaLoading && hasMoreMedia && (
+                  <button
+                    onClick={fetchMoreMedia}
+                    className="mt-3 w-full py-2 text-xs text-center text-slate-500 hover:text-slate-300 transition-colors"
+                  >
+                    Load older media
+                  </button>
                 )}
               </div>
             )}
@@ -4186,6 +4509,12 @@ export default function Chat() {
           isLoading={gifLoading}
           error={gifError}
           sendingKey={gifSendingKey}
+        />
+
+        <EmojiPicker
+          isOpen={isEmojiPickerOpen}
+          onClose={closeEmojiPicker}
+          onSelectEmoji={handleSelectEmoji}
         />
 
         {activeImage && (
@@ -4483,7 +4812,7 @@ export default function Chat() {
                   <button
                     className="mt-3 w-full px-4 py-2 rounded-xl bg-red-600/30 hover:bg-red-600/40 border border-red-500/40 text-red-100 text-sm font-semibold shadow-[0_16px_60px_-40px_rgba(0,0,0,0.7)]"
                     onClick={async () => {
-                      const token = localStorage.getItem("token");
+                      const token = getToken();
                       if (!token) return;
 
                       await fetch(`${API_BASE}/api/conversations/${currentConversation.id}`, {

@@ -4,6 +4,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import * as E2EE from "../utils/e2ee";
 import { API_BASE } from "../config";
+import { getToken } from "../utils/authStorage";
 
 export function useE2EEManager(currentUser) {
     const [myKeyPair, setMyKeyPair] = useState(null);
@@ -27,7 +28,7 @@ export function useE2EEManager(currentUser) {
                 setMyKeyPair(keyPair);
 
                 // Upload public key to server if needed
-                const token = localStorage.getItem("token");
+                const token = getToken();
                 const pubJwk =
                     ring?.keys?.[kid]?.publicJwk ||
                     (await window.crypto.subtle.exportKey("jwk", keyPair.publicKey));
@@ -52,7 +53,7 @@ export function useE2EEManager(currentUser) {
         }
 
         try {
-            const token = localStorage.getItem("token");
+            const token = getToken();
             const resp = await fetch(`${API_BASE}/api/users/${userId}/public-key`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
@@ -116,39 +117,69 @@ export function useE2EEManager(currentUser) {
 
         if (encryptedKeyFromObj) {
             try {
-                // Decrypt the group key
-                const parsed = JSON.parse(encryptedKeyFromObj);
-                const otherJwk = parsed.senderPublicKey;
-                const otherPublicKey = await window.crypto.subtle.importKey(
-                    "jwk",
-                    otherJwk,
-                    { name: "ECDH", namedCurve: "P-256" },
-                    true,
-                    []
-                );
+                // Decrypt the group key - handle both formats:
+                // New format: { ciphertext, iv, senderPublicKey } (embedded JWK)
+                // Legacy format: { ciphertext, iv, from } (userId to look up)
+                const parsed = typeof encryptedKeyFromObj === "string"
+                    ? JSON.parse(encryptedKeyFromObj)
+                    : encryptedKeyFromObj;
 
-                const sharedKey = await window.crypto.subtle.deriveKey(
-                    { name: "ECDH", public: otherPublicKey },
-                    myKeyPair.privateKey,
-                    { name: "AES-GCM", length: 256 },
-                    false,
-                    ["decrypt"]
-                );
+                const unwrapWithJwk = async (jwk) => {
+                    const otherPublicKey = await window.crypto.subtle.importKey(
+                        "jwk",
+                        jwk,
+                        { name: "ECDH", namedCurve: "P-256" },
+                        true,
+                        []
+                    );
+                    const sharedKey = await window.crypto.subtle.deriveKey(
+                        { name: "ECDH", public: otherPublicKey },
+                        myKeyPair.privateKey,
+                        { name: "AES-GCM", length: 256 },
+                        false,
+                        ["decrypt"]
+                    );
+                    return E2EE.decryptWithAesGcm(parsed, sharedKey);
+                };
 
-                const groupKeyString = await E2EE.decryptWithAesGcm(parsed, sharedKey);
-                const cryptoKey = await E2EE.importAesKeyFromGroupKeyString(groupKeyString);
+                let groupKeyString = null;
 
-                // Cache it
-                E2EE.persistGroupKeyString(currentUser.id, convId, version, groupKeyString);
-                setGroupKeyMap((prev) => ({
-                    ...prev,
-                    [convId]: {
-                        ...prev[convId],
-                        [version]: { cryptoKey, version, keyString: groupKeyString },
-                    },
-                }));
+                // Try embedded senderPublicKey first (reliable across key rotations)
+                if (parsed.senderPublicKey) {
+                    try {
+                        groupKeyString = await unwrapWithJwk(parsed.senderPublicKey);
+                    } catch {
+                        // embedded key failed, try fallback
+                    }
+                }
 
-                return cryptoKey;
+                // Fallback: fetch current public key by userId
+                if (!groupKeyString && parsed.from) {
+                    try {
+                        const fromJwk = await getUserPublicKeyJwk(parsed.from);
+                        if (fromJwk) {
+                            groupKeyString = await unwrapWithJwk(fromJwk);
+                        }
+                    } catch {
+                        // server key fetch/decrypt failed
+                    }
+                }
+
+                if (groupKeyString) {
+                    const cryptoKey = await E2EE.importAesKeyFromGroupKeyString(groupKeyString);
+
+                    // Cache it
+                    E2EE.persistGroupKeyString(currentUser.id, convId, version, groupKeyString);
+                    setGroupKeyMap((prev) => ({
+                        ...prev,
+                        [convId]: {
+                            ...prev[convId],
+                            [version]: { cryptoKey, version, keyString: groupKeyString },
+                        },
+                    }));
+
+                    return cryptoKey;
+                }
             } catch (e) {
                 console.error("Failed to decrypt group key from conversation object", e);
                 // Fallthrough to fetch from server
@@ -157,7 +188,7 @@ export function useE2EEManager(currentUser) {
 
         // Fetch from server
         try {
-            const token = localStorage.getItem("token");
+            const token = getToken();
             const resp = await fetch(
                 `${API_BASE}/api/conversations/${convId}/my-group-key?version=${version}`,
                 { headers: { Authorization: `Bearer ${token}` } }
@@ -169,26 +200,54 @@ export function useE2EEManager(currentUser) {
             const encryptedKey = data?.encryptedKey;
             if (!encryptedKey) return null;
 
-            // Decrypt the group key
-            const parsed = JSON.parse(encryptedKey);
-            const otherJwk = parsed.senderPublicKey;
-            const otherPublicKey = await window.crypto.subtle.importKey(
-                "jwk",
-                otherJwk,
-                { name: "ECDH", namedCurve: "P-256" },
-                true,
-                []
-            );
+            // Decrypt the group key - handle both formats
+            const parsed = typeof encryptedKey === "string"
+                ? JSON.parse(encryptedKey)
+                : encryptedKey;
 
-            const sharedKey = await window.crypto.subtle.deriveKey(
-                { name: "ECDH", public: otherPublicKey },
-                myKeyPair.privateKey,
-                { name: "AES-GCM", length: 256 },
-                false,
-                ["decrypt"]
-            );
+            const unwrapWithJwk = async (jwk) => {
+                const otherPublicKey = await window.crypto.subtle.importKey(
+                    "jwk",
+                    jwk,
+                    { name: "ECDH", namedCurve: "P-256" },
+                    true,
+                    []
+                );
+                const sharedKey = await window.crypto.subtle.deriveKey(
+                    { name: "ECDH", public: otherPublicKey },
+                    myKeyPair.privateKey,
+                    { name: "AES-GCM", length: 256 },
+                    false,
+                    ["decrypt"]
+                );
+                return E2EE.decryptWithAesGcm(parsed, sharedKey);
+            };
 
-            const groupKeyString = await E2EE.decryptWithAesGcm(parsed, sharedKey);
+            let groupKeyString = null;
+
+            // Try embedded senderPublicKey first
+            if (parsed.senderPublicKey) {
+                try {
+                    groupKeyString = await unwrapWithJwk(parsed.senderPublicKey);
+                } catch {
+                    // embedded key failed
+                }
+            }
+
+            // Fallback: fetch by userId
+            if (!groupKeyString && parsed.from) {
+                try {
+                    const fromJwk = await getUserPublicKeyJwk(parsed.from);
+                    if (fromJwk) {
+                        groupKeyString = await unwrapWithJwk(fromJwk);
+                    }
+                } catch {
+                    // fallback failed
+                }
+            }
+
+            if (!groupKeyString) return null;
+
             const cryptoKey = await E2EE.importAesKeyFromGroupKeyString(groupKeyString);
 
             // Cache it
@@ -241,6 +300,7 @@ export function useE2EEManager(currentUser) {
                     ciphertext,
                     iv,
                     senderPublicKey: myPublicJwk,
+                    from: currentUser?.id || null,
                 });
             } catch (e) {
                 console.error(`Failed to encrypt group key for user ${uid}`, e);

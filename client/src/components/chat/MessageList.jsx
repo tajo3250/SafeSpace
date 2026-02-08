@@ -1,11 +1,17 @@
-import React, { useLayoutEffect, useMemo, useRef } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { parseMessagePayload } from "../../utils/messagePayload";
+import { resolveAttachmentUrl } from "../../utils/attachmentUrls";
 import {
     getGifFromMessageText,
     getGifFromPayload,
     gifKey,
     isGifAttachment,
 } from "../../utils/gifHelpers";
+import { extractUrls, linkifyText } from "../../utils/linkDetection";
+import { getUser as getStoredUser } from "../../utils/authStorage";
+import LinkPreview from "./LinkPreview";
+import ReactionDisplay from "./ReactionDisplay";
+import ReactionPicker from "./ReactionPicker";
 
 function DayDivider({ label }) {
     return (
@@ -49,17 +55,31 @@ export default function MessageList({
     onOpenImage,
     gifFavoriteKeys,
     onToggleGifFavorite,
-    attachmentBlobUrls
+    attachmentBlobUrls,
+    onReactToMessage
 }) {
     const didNotifyReadyRef = useRef(false);
+    const [reactionPicker, setReactionPicker] = useState({ open: false, messageId: null, rect: null });
+
+    const openReactionPicker = useCallback((messageId, event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        setReactionPicker({ open: true, messageId, rect });
+    }, []);
+
+    const closeReactionPicker = useCallback(() => {
+        setReactionPicker({ open: false, messageId: null, rect: null });
+    }, []);
+
+    const handlePickReaction = useCallback((emoji) => {
+        if (reactionPicker.messageId && onReactToMessage) {
+            onReactToMessage(reactionPicker.messageId, emoji);
+        }
+        closeReactionPicker();
+    }, [reactionPicker.messageId, onReactToMessage, closeReactionPicker]);
+
     const resolvedUser = useMemo(() => {
         if (currentUser?.id || currentUser?.username) return currentUser;
-        try {
-            const raw = localStorage.getItem("user");
-            return raw ? JSON.parse(raw) : null;
-        } catch {
-            return null;
-        }
+        return getStoredUser();
     }, [currentUser]);
 
     useLayoutEffect(() => {
@@ -137,9 +157,17 @@ export default function MessageList({
             const gifCount = attachments.filter(isGifAttachment).length;
             if (gifCount === 1) return "GIF";
             if (gifCount > 1) return `GIFs (${gifCount})`;
+            const fileCount = attachments.filter(a => a.type === "file").length;
+            const imgCount = attachments.filter(a => a.type === "image").length;
+            const parts = [];
+            if (imgCount === 1) parts.push("Image");
+            else if (imgCount > 1) parts.push(`Images (${imgCount})`);
+            if (fileCount === 1) parts.push(attachments.find(a => a.type === "file")?.name || "File");
+            else if (fileCount > 1) parts.push(`Files (${fileCount})`);
+            if (parts.length > 0) return parts.join(", ");
             const count = attachments.length;
-            if (count === 1) return "Image";
-            if (count > 1) return `Images (${count})`;
+            if (count === 1) return "Attachment";
+            if (count > 1) return `Attachments (${count})`;
             return "";
         };
 
@@ -282,7 +310,7 @@ export default function MessageList({
                 !isGifOnlyText &&
                 !isGifOnlyAttachmentText;
 
-            const isImageOnly = !showText && (attachments.length > 0 || gifFromText);
+            const isImageOnly = !showText && (attachments.length > 0 || gifFromText) && attachments.every(a => a.type !== "file");
 
             items.push(
                 <div
@@ -363,52 +391,249 @@ export default function MessageList({
                                             }}
                                         >
                                             <div className="flex flex-col gap-2">
-                                                {attachments.length > 0 && (
-                                                    <div
-                                                        className={[
-                                                            "grid gap-2",
-                                                            attachments.length > 1 ? "grid-cols-2" : "grid-cols-1",
-                                                            "w-full max-w-[360px]"
-                                                        ].join(" ")}
-                                                    >
-                                                        {attachments.map((attachment, index) => {
-                                                            const cacheKey = attachment.id || attachment.url;
-                                                            const blobUrl = attachmentBlobUrls ? attachmentBlobUrls[cacheKey] : null;
+                                                {attachments.length > 0 && (() => {
+                                                    const imageAtts = attachments.filter(a => a.type !== "file");
+                                                    const fileAtts = attachments.filter(a => a.type === "file");
 
-                                                            const previewSrc =
-                                                                blobUrl || attachment.previewUrl || attachment.dataUrl || attachment.url;
-                                                            const fullSrc = blobUrl || attachment.dataUrl || attachment.url || attachment.previewUrl;
-                                                            if (!previewSrc) return null;
-                                                            return (
-                                                                <button
-                                                                    key={attachment.id || `${msg.id}-${index}`}
-                                                                    type="button"
-                                                                    onClick={() => {
-                                                                        if (!onOpenImage || !fullSrc) return;
-                                                                        onOpenImage({
-                                                                            id: attachment.id || `${msg.id}-${index}`,
-                                                                            src: fullSrc,
-                                                                            name: attachment.name,
-                                                                            size: attachment.size,
-                                                                            width: attachment.width,
-                                                                            height: attachment.height,
-                                                                            messageId: msg.id,
-                                                                        });
-                                                                    }}
-                                                                    className="group relative overflow-hidden rounded-xl border border-white/10 bg-white/5"
+                                                    const formatSize = (bytes) => {
+                                                        if (!Number.isFinite(bytes) || bytes === 0) return "";
+                                                        const units = ["B", "KB", "MB", "GB"];
+                                                        let size = bytes;
+                                                        let idx = 0;
+                                                        while (size >= 1024 && idx < units.length - 1) {
+                                                            size /= 1024;
+                                                            idx += 1;
+                                                        }
+                                                        const decimals = size >= 10 || idx === 0 ? 0 : 1;
+                                                        return `${size.toFixed(decimals)} ${units[idx]}`;
+                                                    };
+
+                                                    const getFileIconType = (mime) => {
+                                                        if (!mime) return "file";
+                                                        if (mime.startsWith("video/")) return "video";
+                                                        if (mime.startsWith("audio/")) return "audio";
+                                                        if (mime === "application/pdf") return "pdf";
+                                                        if (mime.includes("zip") || mime.includes("compressed") || mime.includes("archive") || mime.includes("tar") || mime.includes("7z") || mime.includes("rar")) return "archive";
+                                                        if (mime.startsWith("text/") || mime.includes("document") || mime.includes("word") || mime.includes("sheet") || mime.includes("presentation") || mime.includes("csv")) return "document";
+                                                        return "file";
+                                                    };
+
+                                                    const fileIconColors = {
+                                                        video: "text-purple-400",
+                                                        audio: "text-green-400",
+                                                        pdf: "text-red-400",
+                                                        archive: "text-yellow-400",
+                                                        document: "text-blue-400",
+                                                        file: "text-slate-400",
+                                                    };
+
+                                                    const renderFileIcon = (mime) => {
+                                                        const type = getFileIconType(mime);
+                                                        const color = fileIconColors[type] || "text-slate-400";
+                                                        const svgs = {
+                                                            video: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>,
+                                                            audio: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>,
+                                                            pdf: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>,
+                                                            archive: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8v13H3V8"></path><path d="M1 3h22v5H1z"></path><path d="M10 12h4"></path></svg>,
+                                                            document: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>,
+                                                            file: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>,
+                                                        };
+                                                        return <span className={color}>{svgs[type] || svgs.file}</span>;
+                                                    };
+
+                                                    const getFileExt = (name) => {
+                                                        if (!name) return "";
+                                                        const dot = name.lastIndexOf(".");
+                                                        if (dot < 0 || dot === name.length - 1) return "";
+                                                        return name.slice(dot + 1).toUpperCase();
+                                                    };
+
+                                                    return (
+                                                        <>
+                                                            {imageAtts.length > 0 && (
+                                                                <div
+                                                                    className={[
+                                                                        "grid gap-2",
+                                                                        imageAtts.length > 1 ? "grid-cols-2" : "grid-cols-1",
+                                                                        "w-full max-w-[360px]"
+                                                                    ].join(" ")}
                                                                 >
-                                                                    <img
-                                                                        src={previewSrc}
-                                                                        alt={attachment.name || "Image"}
-                                                                        className="h-32 w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-                                                                        loading="lazy"
-                                                                        decoding="async"
-                                                                    />
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
-                                                )}
+                                                                    {imageAtts.map((attachment, index) => {
+                                                                        const cacheKey = attachment.id || attachment.url;
+                                                                        const blobUrl = attachmentBlobUrls ? attachmentBlobUrls[cacheKey] : null;
+                                                                        const resolvedPreview = resolveAttachmentUrl(attachment.previewUrl);
+                                                                        const resolvedUrl = resolveAttachmentUrl(attachment.processedUrl || attachment.url);
+                                                                        const previewSrc = blobUrl || resolvedPreview || attachment.dataUrl || resolvedUrl;
+                                                                        const fullSrc = blobUrl || attachment.dataUrl || resolvedUrl || resolvedPreview;
+                                                                        if (!previewSrc) return null;
+                                                                        return (
+                                                                            <button
+                                                                                key={attachment.id || `${msg.id}-img-${index}`}
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    if (!onOpenImage || !fullSrc) return;
+                                                                                    onOpenImage({
+                                                                                        id: attachment.id || `${msg.id}-${index}`,
+                                                                                        src: fullSrc,
+                                                                                        name: attachment.name,
+                                                                                        size: attachment.size,
+                                                                                        width: attachment.width,
+                                                                                        height: attachment.height,
+                                                                                        messageId: msg.id,
+                                                                                    });
+                                                                                }}
+                                                                                className="group relative overflow-hidden rounded-xl border border-white/10 bg-white/5"
+                                                                            >
+                                                                                <img
+                                                                                    src={previewSrc}
+                                                                                    alt={attachment.name || "Image"}
+                                                                                    className="h-32 w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                                                                                    loading="lazy"
+                                                                                    decoding="async"
+                                                                                />
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                            {fileAtts.length > 0 && (
+                                                                <div className="flex flex-col gap-1.5 w-full max-w-[360px]">
+                                                                    {fileAtts.map((attachment, index) => {
+                                                                        const cacheKey = attachment.id || attachment.url;
+                                                                        const blobUrl = attachmentBlobUrls ? attachmentBlobUrls[cacheKey] : null;
+                                                                        const resolvedUrl = resolveAttachmentUrl(attachment.url);
+                                                                        const downloadUrl = blobUrl || resolvedUrl;
+                                                                        const ext = getFileExt(attachment.name);
+
+                                                                        const fileType = getFileIconType(attachment.mime);
+
+                                                                        // Video: inline player with controls
+                                                                        if (fileType === "video" && downloadUrl) {
+                                                                            return (
+                                                                                <div key={attachment.id || `${msg.id}-file-${index}`} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+                                                                                    <video
+                                                                                        controls
+                                                                                        preload="metadata"
+                                                                                        className="w-full max-h-[300px] bg-black/40"
+                                                                                        src={downloadUrl}
+                                                                                    />
+                                                                                    <a
+                                                                                        href={downloadUrl}
+                                                                                        download={attachment.name || "video"}
+                                                                                        className="flex items-center gap-3 px-3.5 py-2 border-t border-white/10 hover:bg-white/5 transition-colors no-underline group"
+                                                                                    >
+                                                                                        <div className="shrink-0 h-8 w-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                                                                                            {renderFileIcon(attachment.mime)}
+                                                                                        </div>
+                                                                                        <div className="min-w-0 flex-1">
+                                                                                            <div className="text-xs text-slate-300 truncate">{attachment.name || "Video"}</div>
+                                                                                            <div className="text-[11px] text-slate-500">
+                                                                                                {ext && <span className="uppercase">{ext}</span>}
+                                                                                                {ext && attachment.size ? <span> · </span> : null}
+                                                                                                {attachment.size ? <span>{formatSize(attachment.size)}</span> : null}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                        <div className="shrink-0 text-slate-400 group-hover:text-[rgb(var(--ss-accent-rgb))] transition-colors">
+                                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                                                                        </div>
+                                                                                    </a>
+                                                                                </div>
+                                                                            );
+                                                                        }
+
+                                                                        // Audio: compact card with inline player
+                                                                        if (fileType === "audio" && downloadUrl) {
+                                                                            return (
+                                                                                <div key={attachment.id || `${msg.id}-file-${index}`} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+                                                                                    <div className="flex items-center gap-3 px-3.5 py-2.5">
+                                                                                        <div className="shrink-0 h-10 w-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                                                                                            {renderFileIcon(attachment.mime)}
+                                                                                        </div>
+                                                                                        <div className="min-w-0 flex-1">
+                                                                                            <div className="text-sm text-slate-200 truncate font-medium">{attachment.name || "Audio"}</div>
+                                                                                            <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                                                                                {ext && <span className="uppercase">{ext}</span>}
+                                                                                                {ext && attachment.size ? <span>·</span> : null}
+                                                                                                {attachment.size ? <span>{formatSize(attachment.size)}</span> : null}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                        <a href={downloadUrl} download={attachment.name || "audio"} className="shrink-0 text-slate-400 hover:text-[rgb(var(--ss-accent-rgb))] transition-colors">
+                                                                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                                                                        </a>
+                                                                                    </div>
+                                                                                    <div className="px-3.5 pb-2.5">
+                                                                                        <audio controls preload="metadata" className="w-full h-8" style={{ colorScheme: "dark" }} src={downloadUrl} />
+                                                                                    </div>
+                                                                                </div>
+                                                                            );
+                                                                        }
+
+                                                                        // PDF: preview link opens in new tab
+                                                                        if (fileType === "pdf" && downloadUrl) {
+                                                                            return (
+                                                                                <a
+                                                                                    key={attachment.id || `${msg.id}-file-${index}`}
+                                                                                    href={downloadUrl}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    className="group flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 px-3.5 py-2.5 transition-colors no-underline"
+                                                                                >
+                                                                                    <div className="shrink-0 h-10 w-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                                                                                        {renderFileIcon(attachment.mime)}
+                                                                                    </div>
+                                                                                    <div className="min-w-0 flex-1">
+                                                                                        <div className="text-sm text-slate-200 truncate font-medium group-hover:text-white transition-colors">
+                                                                                            {attachment.name || "PDF"}
+                                                                                        </div>
+                                                                                        <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                                                                            <span className="text-[rgb(var(--ss-accent-rgb)/0.8)]">Click to preview</span>
+                                                                                            {attachment.size ? <span>· {formatSize(attachment.size)}</span> : null}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    <div className="shrink-0 text-slate-400 group-hover:text-[rgb(var(--ss-accent-rgb))] transition-colors">
+                                                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                                                                                    </div>
+                                                                                </a>
+                                                                            );
+                                                                        }
+
+                                                                        // Default: download card (existing behavior)
+                                                                        return (
+                                                                            <a
+                                                                                key={attachment.id || `${msg.id}-file-${index}`}
+                                                                                href={downloadUrl || "#"}
+                                                                                download={attachment.name || "file"}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                className="group flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 px-3.5 py-2.5 transition-colors no-underline"
+                                                                                onClick={(e) => {
+                                                                                    if (!downloadUrl) e.preventDefault();
+                                                                                }}
+                                                                            >
+                                                                                <div className="shrink-0 h-10 w-10 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center">
+                                                                                    {renderFileIcon(attachment.mime)}
+                                                                                </div>
+                                                                                <div className="min-w-0 flex-1">
+                                                                                    <div className="text-sm text-slate-200 truncate font-medium group-hover:text-white transition-colors">
+                                                                                        {attachment.name || "File"}
+                                                                                    </div>
+                                                                                    <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                                                                        {ext && <span className="uppercase">{ext}</span>}
+                                                                                        {ext && attachment.size ? <span>·</span> : null}
+                                                                                        {attachment.size ? <span>{formatSize(attachment.size)}</span> : null}
+                                                                                    </div>
+                                                                                </div>
+                                                                                <div className="shrink-0 text-slate-400 group-hover:text-[rgb(var(--ss-accent-rgb))] transition-colors">
+                                                                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                                                                                </div>
+                                                                            </a>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            )}
+                                                        </>
+                                                    );
+                                                })()}
                                                 {!hasAttachments && gifFromText && (
                                                     <button
                                                         type="button"
@@ -437,16 +662,48 @@ export default function MessageList({
                                                         />
                                                     </button>
                                                 )}
-                                                {showText && (
-                                                    <div className="whitespace-pre-wrap ss-text leading-relaxed">
-                                                        {safeDisplayText}
-                                                    </div>
-                                                )}
+                                                {showText && (() => {
+                                                    const segments = linkifyText(safeDisplayText);
+                                                    const urls = extractUrls(safeDisplayText);
+                                                    const firstUrl = urls.length > 0 ? urls[0] : null;
+                                                    return (
+                                                        <>
+                                                            <div className="whitespace-pre-wrap ss-text leading-relaxed [overflow-wrap:anywhere]">
+                                                                {segments.map((seg, i) =>
+                                                                    seg.type === "link" ? (
+                                                                        <a
+                                                                            key={i}
+                                                                            href={seg.url}
+                                                                            target="_blank"
+                                                                            rel="noopener noreferrer"
+                                                                            className="text-[rgb(var(--ss-accent-rgb))] hover:underline break-all"
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                        >
+                                                                            {seg.content}
+                                                                        </a>
+                                                                    ) : (
+                                                                        <React.Fragment key={i}>{seg.content}</React.Fragment>
+                                                                    )
+                                                                )}
+                                                            </div>
+                                                            {firstUrl && <LinkPreview url={firstUrl} />}
+                                                        </>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
 
                                         {/* ACTIONS */}
                                         <div className="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity scale-90 group-hover:scale-100">
+                                            {onReactToMessage && (
+                                                <button
+                                                    onClick={(e) => openReactionPicker(msg.id, e)}
+                                                    className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-[rgb(var(--ss-accent-rgb))] transition-colors shadow-[0_10px_30px_-24px_rgba(0,0,0,0.8)]"
+                                                    title="React"
+                                                >
+                                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => {
                                                     if (onReplyToMessage) {
@@ -509,6 +766,17 @@ export default function MessageList({
                                         </div>
                                     </div>
 
+                                    {msg.reactions && (
+                                        <ReactionDisplay
+                                            reactions={msg.reactions}
+                                            currentUserId={currentUserId}
+                                            allUsers={allUsers}
+                                            onToggleReaction={(emoji) => {
+                                                if (onReactToMessage) onReactToMessage(msg.id, emoji);
+                                            }}
+                                        />
+                                    )}
+
                                     {!showMeta && ts && (
                                         <div className="mt-1 ml-1 text-slate-400 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity">
                                             {timeLabel(ts)} {isEdited && "(edited)"}
@@ -557,7 +825,9 @@ export default function MessageList({
         onOpenImage,
         gifFavoriteKeys,
         onToggleGifFavorite,
-        attachmentBlobUrls
+        attachmentBlobUrls,
+        onReactToMessage,
+        openReactionPicker
     ]);
 
     return (
@@ -621,6 +891,12 @@ export default function MessageList({
                     </button>
                 </div>
             )}
+            <ReactionPicker
+                isOpen={reactionPicker.open}
+                rect={reactionPicker.rect}
+                onSelect={handlePickReaction}
+                onClose={closeReactionPicker}
+            />
         </div>
     );
 }

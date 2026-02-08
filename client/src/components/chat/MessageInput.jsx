@@ -2,6 +2,64 @@ import React, { useEffect, useRef, useState } from "react";
 
 const MAX_MESSAGE_CHARS = 4000;
 
+function getFileIcon(mime) {
+    if (!mime) return "file";
+    if (mime.startsWith("video/")) return "video";
+    if (mime.startsWith("audio/")) return "audio";
+    if (mime === "application/pdf") return "pdf";
+    if (mime.startsWith("application/zip") || mime.includes("compressed") || mime.includes("archive") || mime.includes("tar") || mime.includes("7z") || mime.includes("rar")) return "archive";
+    if (mime.startsWith("text/") || mime.includes("document") || mime.includes("word") || mime.includes("sheet") || mime.includes("presentation") || mime.includes("csv")) return "document";
+    return "file";
+}
+
+function FileTypeIcon({ mime, className = "w-6 h-6" }) {
+    const type = getFileIcon(mime);
+    const iconColor = {
+        video: "text-purple-400",
+        audio: "text-green-400",
+        pdf: "text-red-400",
+        archive: "text-yellow-400",
+        document: "text-blue-400",
+        file: "text-slate-400",
+    }[type];
+
+    return (
+        <div className={`${className} ${iconColor} flex items-center justify-center`}>
+            {type === "video" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>
+            )}
+            {type === "audio" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            )}
+            {type === "pdf" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            )}
+            {type === "archive" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 8v13H3V8"></path><path d="M1 3h22v5H1z"></path><path d="M10 12h4"></path></svg>
+            )}
+            {type === "document" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+            )}
+            {type === "file" && (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+            )}
+        </div>
+    );
+}
+
+function formatFileSize(bytes) {
+    if (!Number.isFinite(bytes) || bytes === 0) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let size = bytes;
+    let idx = 0;
+    while (size >= 1024 && idx < units.length - 1) {
+        size /= 1024;
+        idx += 1;
+    }
+    const decimals = size >= 10 || idx === 0 ? 0 : 1;
+    return `${size.toFixed(decimals)} ${units[idx]}`;
+}
+
 export default function MessageInput({
     input,
     setInput,
@@ -23,9 +81,11 @@ export default function MessageInput({
     onAddImages,
     removePendingImage,
     clearPendingImages,
+    retryPendingUpload,
     maxImageBytes,
     formatBytes,
-    onOpenGifPicker
+    onOpenGifPicker,
+    onOpenEmojiPicker
 }) {
     const textareaRef = useRef(null);
     const fileInputRef = useRef(null);
@@ -64,14 +124,14 @@ export default function MessageInput({
 
     const hasImages = Array.isArray(pendingImages) && pendingImages.length > 0;
     const hasProcessingImages = Array.isArray(pendingImages)
-        ? pendingImages.some((img) => img.status !== "ready")
+        ? pendingImages.some((img) => img.status === "loading")
         : false;
     const canSend = editingMessageId
         ? Boolean(input.trim())
         : Boolean(input.trim() || hasImages);
     const sendDisabled = !canSend || hasProcessingImages;
     const attachmentsDisabled = Boolean(editingMessageId);
-    const imageLimitLabel = formatBytes && maxImageBytes ? formatBytes(maxImageBytes) : "3 GB";
+    const fileLimitLabel = formatBytes && maxImageBytes ? formatBytes(maxImageBytes) : "1 GB";
 
     const handleFiles = (files) => {
         if (attachmentsDisabled) return;
@@ -87,7 +147,7 @@ export default function MessageInput({
         for (const item of items) {
             if (item.kind === "file") {
                 const file = item.getAsFile();
-                if (file && file.type && file.type.startsWith("image/")) {
+                if (file) {
                     files.push(file);
                 }
             }
@@ -102,9 +162,7 @@ export default function MessageInput({
         e.preventDefault();
         setIsDragActive(false);
         if (attachmentsDisabled) return;
-        const files = Array.from(e.dataTransfer?.files || []).filter(
-            (file) => file.type && file.type.startsWith("image/")
-        );
+        const files = Array.from(e.dataTransfer?.files || []);
         if (files.length > 0) handleFiles(files);
     };
 
@@ -129,7 +187,7 @@ export default function MessageInput({
             >
                 {isDragActive && !attachmentsDisabled && (
                     <div className="absolute inset-0 z-10 rounded-2xl border-2 border-dashed border-[rgb(var(--ss-accent-rgb)/0.6)] bg-[rgb(var(--ss-accent-rgb)/0.08)] flex items-center justify-center text-sm text-slate-100 pointer-events-none">
-                        Drop images to upload
+                        Drop files to upload
                     </div>
                 )}
                 {editingMessageId && (
@@ -204,7 +262,7 @@ export default function MessageInput({
                 {!editingMessageId && hasImages && (
                     <div className="mb-3 rounded-xl border border-white/10 bg-white/5 p-3">
                         <div className="flex items-center justify-between text-xs text-slate-400">
-                            <span>Images ({pendingImages.length})</span>
+                            <span>Attachments ({pendingImages.length})</span>
                             {clearPendingImages && (
                                 <button
                                     type="button"
@@ -216,37 +274,104 @@ export default function MessageInput({
                             )}
                         </div>
                         <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
-                            {pendingImages.map((img) => (
-                                <div
-                                    key={img.id}
-                                    className="relative h-20 w-20 rounded-lg border border-white/10 bg-white/5 overflow-hidden shrink-0"
-                                >
-                                    {img.status === "ready" && img.dataUrl ? (
-                                        <img
-                                            src={img.dataUrl}
-                                            alt={img.name || "Image"}
-                                            className="h-full w-full object-cover"
-                                            loading="lazy"
-                                            decoding="async"
-                                        />
-                                    ) : (
-                                        <div className="h-full w-full flex items-center justify-center text-[11px] text-slate-400">
-                                            Loading...
-                                        </div>
-                                    )}
-                                    {removePendingImage && (
-                                        <button
-                                            type="button"
-                                            onClick={() => removePendingImage(img.id)}
-                                            className="absolute top-1 right-1 h-5 w-5 rounded-full bg-black/60 text-white text-[11px] flex items-center justify-center"
-                                            title="Remove image"
-                                            aria-label="Remove image"
-                                        >
-                                            x
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
+                            {pendingImages.map((img) => {
+                                const isImage = img.type !== "file" && img.mime && img.mime.startsWith("image/");
+                                const isError = img.status === "error";
+                                const isLoading = img.status === "loading";
+                                const isReady = img.status === "ready";
+
+                                return (
+                                    <div
+                                        key={img.id}
+                                        className={[
+                                            "relative shrink-0 rounded-lg border overflow-hidden",
+                                            isError
+                                                ? "border-red-500/40 bg-red-500/10"
+                                                : "border-white/10 bg-white/5",
+                                            isImage ? "h-20 w-20" : "h-20 w-44",
+                                        ].join(" ")}
+                                    >
+                                        {isImage && isReady && img.dataUrl ? (
+                                            <img
+                                                src={img.dataUrl}
+                                                alt={img.name || "Image"}
+                                                className="h-full w-full object-cover"
+                                                loading="lazy"
+                                                decoding="async"
+                                            />
+                                        ) : isImage && isLoading ? (
+                                            <div className="h-full w-full flex flex-col items-center justify-center gap-1 px-1">
+                                                <div className="w-full rounded-full bg-white/10 h-1.5 overflow-hidden">
+                                                    <div
+                                                        className="h-full rounded-full bg-[rgb(var(--ss-accent-rgb))] transition-all duration-300"
+                                                        style={{ width: `${img.progress || 0}%` }}
+                                                    />
+                                                </div>
+                                                <span className="text-[10px] text-slate-400">{img.progress || 0}%</span>
+                                            </div>
+                                        ) : !isImage ? (
+                                            <div className="h-full w-full flex items-center gap-2.5 px-3">
+                                                <FileTypeIcon mime={img.mime} className="w-8 h-8 shrink-0" />
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-[11px] text-slate-200 truncate font-medium">{img.name || "File"}</div>
+                                                    <div className="text-[10px] text-slate-500">{formatFileSize(img.size)}</div>
+                                                    {isLoading && (
+                                                        <div className="mt-1 w-full rounded-full bg-white/10 h-1 overflow-hidden">
+                                                            <div
+                                                                className="h-full rounded-full bg-[rgb(var(--ss-accent-rgb))] transition-all duration-300"
+                                                                style={{ width: `${img.progress || 0}%` }}
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    {isError && (
+                                                        <div className="text-[10px] text-red-400 mt-0.5">Failed</div>
+                                                    )}
+                                                    {isReady && (
+                                                        <div className="text-[10px] text-green-400 mt-0.5">Ready</div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ) : null}
+
+                                        {/* Error overlay for images */}
+                                        {isImage && isError && (
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 gap-1">
+                                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-red-400"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                                                <span className="text-[9px] text-red-400">Failed</span>
+                                            </div>
+                                        )}
+
+                                        {/* Retry button for errored items */}
+                                        {isError && retryPendingUpload && (
+                                            <button
+                                                type="button"
+                                                onClick={() => retryPendingUpload(img.id)}
+                                                className={[
+                                                    "absolute flex items-center justify-center rounded-full bg-[rgb(var(--ss-accent-rgb))] text-slate-900 shadow-lg transition-all hover:scale-110",
+                                                    isImage ? "bottom-1 left-1/2 -translate-x-1/2 h-6 w-6" : "top-1 right-7 h-5 w-5",
+                                                ].join(" ")}
+                                                title="Retry upload"
+                                                aria-label="Retry upload"
+                                            >
+                                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                                            </button>
+                                        )}
+
+                                        {/* Remove button */}
+                                        {removePendingImage && (
+                                            <button
+                                                type="button"
+                                                onClick={() => removePendingImage(img.id)}
+                                                className="absolute top-1 right-1 h-5 w-5 rounded-full bg-black/60 text-white text-[11px] flex items-center justify-center"
+                                                title="Remove"
+                                                aria-label="Remove"
+                                            >
+                                                x
+                                            </button>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 )}
@@ -255,7 +380,6 @@ export default function MessageInput({
                     <input
                         ref={fileInputRef}
                         type="file"
-                        accept="image/*"
                         multiple
                         className="hidden"
                         onChange={(e) => {
@@ -273,10 +397,10 @@ export default function MessageInput({
                                 ? "bg-white/5 text-slate-500 cursor-not-allowed"
                                 : "bg-white/10 hover:bg-white/16 text-slate-200"
                         ].join(" ")}
-                        title="Add images"
-                        aria-label="Add images"
+                        title="Attach files"
+                        aria-label="Attach files"
                     >
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="M21 15l-5-5L5 21"></path></svg>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
                     </button>
                     <button
                         type="button"
@@ -295,6 +419,17 @@ export default function MessageInput({
                         aria-label="Add GIF"
                     >
                         GIF
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (onOpenEmojiPicker) onOpenEmojiPicker();
+                        }}
+                        className="h-11 w-11 rounded-xl border border-white/10 bg-white/10 hover:bg-white/16 flex items-center justify-center transition-colors text-slate-200"
+                        title="Add emoji"
+                        aria-label="Add emoji"
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 14s1.5 2 4 2 4-2 4-2"></path><line x1="9" y1="9" x2="9.01" y2="9"></line><line x1="15" y1="9" x2="15.01" y2="9"></line></svg>
                     </button>
                     <textarea
                         ref={textareaRef}

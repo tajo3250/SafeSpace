@@ -35,7 +35,7 @@ export default function Settings() {
   const { textSize, accent, setTextSize, setAccent, reset } = useSettings();
 
   return (
-    <div className="min-h-[100dvh] text-slate-100">
+    <div className="min-h-[calc(100dvh-var(--ss-banner-h,0px))] text-slate-100">
       <header className="sticky top-0 z-10 border-b border-white/10 bg-white/10 backdrop-blur-xl">
         <div className="h-16 px-4 flex items-center gap-3">
           <button

@@ -1,0 +1,66 @@
+{
+  "name": "safespace-desktop",
+  "version": "1.0.0",
+  "description": "SafeSpace — Encrypted messaging, on your desktop.",
+  "main": "main.js",
+  "homepage": "https://safespace.hxn1.dev",
+  "author": {
+    "name": "SafeSpace",
+    "email": "support@safespace.hxn1.dev"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hxn1-z/SafeSpace"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --win --mac --linux"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.safespace.desktop",
+    "productName": "SafeSpace",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "icons/**/*"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "hxn1-z",
+      "repo": "SafeSpace"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "icons/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icons/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "icons/icon.png",
+      "category": "public.app-category.social-networking"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "icons/icon.png",
+      "category": "Network;InstantMessaging;"
+    }
+  }
+}
