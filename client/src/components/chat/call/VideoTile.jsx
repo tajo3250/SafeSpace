@@ -46,16 +46,33 @@ export default function VideoTile({
       return;
     }
     const check = () => {
-      const live = stream.getVideoTracks().some((t) => t.enabled && t.readyState === "live");
+      const live = stream.getVideoTracks().some(
+        (t) => t.enabled && t.readyState === "live" && !t.muted
+      );
       setHasLiveVideo(live);
     };
     check();
 
+    // Listen for track add/remove and mute/unmute on all video tracks
     stream.addEventListener("addtrack", check);
     stream.addEventListener("removetrack", check);
+    const tracks = stream.getVideoTracks();
+    for (const t of tracks) {
+      t.addEventListener("mute", check);
+      t.addEventListener("unmute", check);
+    }
+
+    // Periodic fallback (some browsers don't fire unmute reliably)
+    const interval = setInterval(check, 1000);
+
     return () => {
       stream.removeEventListener("addtrack", check);
       stream.removeEventListener("removetrack", check);
+      for (const t of tracks) {
+        t.removeEventListener("mute", check);
+        t.removeEventListener("unmute", check);
+      }
+      clearInterval(interval);
     };
   }, [stream, streamUpdateTick]);
 

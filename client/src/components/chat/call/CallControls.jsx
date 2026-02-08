@@ -16,7 +16,7 @@ export default function CallControls({
   isFullscreen,
 }) {
   return (
-    <div className="flex items-center justify-center gap-3 py-3">
+    <div className="flex items-center justify-center gap-3 py-3 pb-[calc(env(safe-area-inset-bottom,0px)+12px)]">
       {/* Mute / Unmute */}
       <button
         onClick={onToggleMute}

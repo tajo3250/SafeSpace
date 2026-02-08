@@ -207,6 +207,11 @@ export default class WebRTCManager {
           if (this.onRemoteTrackUpdated) this.onRemoteTrackUpdated(userId);
         };
         track.onunmute = () => {
+          // When replaceTrack() swaps in real media, the receiver track unmutes.
+          // Re-emit the stream so the UI re-renders with the live video.
+          if (this.onRemoteStream && peer?.remoteStream) {
+            this.onRemoteStream(userId, peer.remoteStream);
+          }
           if (this.onRemoteTrackUpdated) this.onRemoteTrackUpdated(userId);
         };
       }
@@ -366,23 +371,16 @@ export default class WebRTCManager {
     const videoTrack = this.localStream.getVideoTracks()[0];
     if (!videoTrack) return false;
 
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-
-    if (isMobile && videoTrack.enabled) {
-      // On mobile, stop the track entirely when disabling to release the camera hardware.
-      // This avoids frozen/black video that some mobile browsers produce with just enabled=false.
-      videoTrack.stop();
-      this.localStream.removeTrack(videoTrack);
-      // Replace track with null on all peer connections
-      for (const [, { pc }] of this.peers) {
-        const sender = pc.getSenders().find((s) => s.track === videoTrack);
-        if (sender) sender.replaceTrack(null).catch(() => {});
-      }
-      return false;
+    // Always stop the track entirely to release camera hardware (LED off).
+    // Re-enabling is handled by addVideoTrack() which creates a fresh track.
+    videoTrack.stop();
+    this.localStream.removeTrack(videoTrack);
+    // Replace track with null on all peer connections (no renegotiation needed)
+    for (const [, { pc }] of this.peers) {
+      const sender = pc.getSenders().find((s) => s.track === videoTrack);
+      if (sender) sender.replaceTrack(null).catch(() => {});
     }
-
-    videoTrack.enabled = !videoTrack.enabled;
-    return videoTrack.enabled;
+    return false;
   }
 
   async addVideoTrack(videoDeviceId = "") {
@@ -392,6 +390,11 @@ export default class WebRTCManager {
     if (existingVideo) return existingVideo;
 
     const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    const acquireVideoTrack = async (constraints) => {
+      const videoStream = await navigator.mediaDevices.getUserMedia(constraints);
+      return videoStream.getVideoTracks()[0];
+    };
 
     try {
       const constraints = {
@@ -403,32 +406,35 @@ export default class WebRTCManager {
           ...(videoDeviceId ? { deviceId: { exact: videoDeviceId } } : {}),
         },
       };
-      const videoStream = await navigator.mediaDevices.getUserMedia(constraints);
-      const videoTrack = videoStream.getVideoTracks()[0];
+
+      let videoTrack;
+      try {
+        videoTrack = await acquireVideoTrack(constraints);
+      } catch (err) {
+        if (isMobile) {
+          videoTrack = await acquireVideoTrack({ video: { facingMode: "user" } });
+        } else {
+          throw err;
+        }
+      }
+
       this.localStream.addTrack(videoTrack);
 
-      // Add track to all peer connections — onnegotiationneeded will handle renegotiation
+      // Use replaceTrack on the pre-allocated video sender (avoids renegotiation).
+      // The pre-allocated transceiver has a null track — swap it with the real camera track.
       for (const [, { pc }] of this.peers) {
-        pc.addTrack(videoTrack, this.localStream);
+        const senders = pc.getSenders();
+        const nullSender = senders.find((s) => s.track === null);
+        const existingSender = nullSender || senders.find((s) => s.track?.kind === "video");
+        if (existingSender) {
+          await existingSender.replaceTrack(videoTrack);
+        } else {
+          pc.addTrack(videoTrack, this.localStream);
+        }
       }
 
       return videoTrack;
     } catch (err) {
-      // On mobile, retry with minimal constraints
-      if (isMobile) {
-        try {
-          const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-          const videoTrack = videoStream.getVideoTracks()[0];
-          this.localStream.addTrack(videoTrack);
-          for (const [, { pc }] of this.peers) {
-            pc.addTrack(videoTrack, this.localStream);
-          }
-          return videoTrack;
-        } catch (retryErr) {
-          console.error("Mobile camera retry also failed:", retryErr);
-          return null;
-        }
-      }
       console.error("Failed to add video track:", err);
       return null;
     }

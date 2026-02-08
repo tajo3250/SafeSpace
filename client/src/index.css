@@ -311,12 +311,11 @@
   @apply bg-white/10 rounded-full;
 }
 
-/* Mobile safe area — push content below notch/status bar and above home indicator */
+/* Mobile safe area — push content below notch/status bar */
 @supports (padding: env(safe-area-inset-top)) {
   @media (max-width: 768px) {
     #root {
       padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
     }
   }
 }
