@@ -84,22 +84,29 @@ const RESOLUTION_OPTIONS = [
   { label: "720p", width: 1280, height: 720 },
   { label: "1080p", width: 1920, height: 1080 },
   { label: "1440p", width: 2560, height: 1440 },
-  { label: "Native", width: 3840, height: 2160 },
+  { label: "4K", width: 3840, height: 2160 },
 ];
 
 const FPS_OPTIONS = [
+  { label: "15", value: 15 },
   { label: "30", value: 30 },
   { label: "60", value: 60 },
   { label: "90", value: 90 },
-  { label: "Native", value: 0 },
+  { label: "120", value: 120 },
+  { label: "144", value: 144 },
+  { label: "165", value: 165 },
+  { label: "210", value: 210 },
+  { label: "240", value: 240 },
+  { label: "265", value: 265 },
 ];
 
 function ScreenSharePicker({ onStart, onCancel }) {
   const [resIdx, setResIdx] = useState(1); // default 1080p
-  const [fpsIdx, setFpsIdx] = useState(0); // default 30
+  const [fpsIdx, setFpsIdx] = useState(1); // default 30fps
+  const [includeAudio, setIncludeAudio] = useState(true);
 
   return (
-    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-10 w-72 rounded-2xl border border-white/10 bg-[#0c1425]/95 backdrop-blur-xl shadow-2xl p-4">
+    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 z-10 w-80 rounded-2xl border border-white/10 bg-[#0c1425]/95 backdrop-blur-xl shadow-2xl p-4">
       <div className="text-sm font-semibold text-slate-200 mb-3">Screen Share Settings</div>
 
       {/* Resolution */}
@@ -123,23 +130,48 @@ function ScreenSharePicker({ onStart, onCancel }) {
       </div>
 
       {/* FPS */}
-      <div className="mb-4">
+      <div className="mb-3">
         <div className="text-xs text-slate-400 mb-1.5">Frame Rate</div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap gap-1.5">
           {FPS_OPTIONS.map((opt, i) => (
             <button
               key={opt.label}
               onClick={() => setFpsIdx(i)}
-              className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-all
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all
                 ${i === fpsIdx
                   ? "bg-[rgb(var(--ss-accent-rgb)/0.3)] border border-[rgb(var(--ss-accent-rgb)/0.5)] text-white"
                   : "bg-white/5 border border-white/8 text-slate-400 hover:bg-white/10"
                 }`}
             >
-              {opt.label === "Native" ? "Native" : `${opt.label} fps`}
+              {opt.label}
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Share audio checkbox */}
+      <div className="mb-4">
+        <label className="flex items-center gap-2.5 cursor-pointer group">
+          <div
+            onClick={() => setIncludeAudio(!includeAudio)}
+            className={`h-4.5 w-8 rounded-full transition-all duration-200 relative flex items-center shrink-0 ${
+              includeAudio
+                ? "bg-[rgb(var(--ss-accent-rgb)/0.6)]"
+                : "bg-white/10"
+            }`}
+            style={{ height: "18px", width: "32px" }}
+          >
+            <div
+              className={`h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${
+                includeAudio ? "translate-x-[15px]" : "translate-x-[2px]"
+              }`}
+              style={{ height: "14px", width: "14px" }}
+            />
+          </div>
+          <span className="text-xs text-slate-300 group-hover:text-slate-200 transition-colors select-none">
+            Share audio
+          </span>
+        </label>
       </div>
 
       <div className="flex gap-2">
@@ -156,7 +188,8 @@ function ScreenSharePicker({ onStart, onCancel }) {
             onStart({
               width: res.width,
               height: res.height,
-              fps: fps.value || undefined,
+              fps: fps.value,
+              audio: includeAudio,
             });
           }}
           className="flex-1 py-2 rounded-lg bg-[rgb(var(--ss-accent-rgb)/0.6)] hover:bg-[rgb(var(--ss-accent-rgb)/0.8)] border border-[rgb(var(--ss-accent-rgb)/0.5)] text-white text-sm font-semibold transition-all"

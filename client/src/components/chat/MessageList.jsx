@@ -443,7 +443,7 @@ export default function MessageList({
                                 return (
                                     <div
                                         className={[
-                                            "shrink-0 mt-0.5 h-9 w-9 rounded-xl border flex items-center justify-center font-semibold shadow-[0_12px_30px_-26px_rgba(0,0,0,0.8)] transition-transform hover:scale-105 backdrop-blur cursor-pointer overflow-hidden",
+                                            "shrink-0 mt-0.5 h-9 w-9 rounded-full border flex items-center justify-center font-semibold shadow-[0_12px_30px_-26px_rgba(0,0,0,0.8)] transition-transform hover:scale-105 backdrop-blur cursor-pointer overflow-hidden",
                                             isMe
                                                 ? "bg-[radial-gradient(circle_at_40%_40%,rgb(var(--ss-accent-rgb)/0.35),rgba(12,18,30,0.9))] border-[rgb(var(--ss-accent-rgb)/0.45)] text-[rgb(var(--ss-accent-rgb))]"
                                                 : "bg-gradient-to-br from-white/10 via-white/5 to-white/10 border-white/10 text-slate-200",

@@ -539,7 +539,8 @@ export default class WebRTCManager {
       // Use provided settings or defaults
       const resWidth = settings?.width || 1920;
       const resHeight = settings?.height || 1080;
-      const fps = settings?.fps || (isElectron ? 60 : 30);
+      const fps = settings?.fps != null ? settings.fps : (isElectron ? 60 : 30);
+      const wantAudio = settings?.audio !== false;
 
       const constraints = {
         video: {
@@ -548,7 +549,7 @@ export default class WebRTCManager {
           height: { ideal: resHeight, max: 2160 },
           frameRate: { ideal: fps, max: Math.max(fps, 60) },
         },
-        audio: true,
+        audio: wantAudio,
       };
 
       this.screenStream = await navigator.mediaDevices.getDisplayMedia(constraints);
@@ -572,7 +573,7 @@ export default class WebRTCManager {
         }
       }
 
-      // If screen has audio, mix it with mic audio via Web Audio API.
+      // If screen has audio and user opted in, mix it with mic audio via Web Audio API.
       // This uses replaceTrack() instead of addTrack() to avoid renegotiation
       // which would break the video stream and cause mic issues.
       if (screenAudioTrack && audioTrack) {
