@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, dialog, session, desktopCapturer } = require("electron");
+const { app, BrowserWindow, shell, dialog, session, desktopCapturer, Menu, clipboard } = require("electron");
 const { autoUpdater } = require("electron-updater");
 const path = require("path");
 
@@ -127,14 +127,80 @@ function createWindow() {
     return { action: "deny" };
   });
 
+  // Native right-click context menu (copy/paste text, copy image, copy link)
+  mainWindow.webContents.on("context-menu", (event, params) => {
+    const menuItems = [];
+
+    // Editable fields: Cut, Copy, Paste, Select All
+    if (params.isEditable) {
+      menuItems.push(
+        { label: "Cut", role: "cut", enabled: params.editFlags.canCut },
+        { label: "Copy", role: "copy", enabled: params.editFlags.canCopy },
+        { label: "Paste", role: "paste", enabled: params.editFlags.canPaste },
+        { type: "separator" },
+        { label: "Select All", role: "selectAll", enabled: params.editFlags.canSelectAll }
+      );
+    } else if (params.selectionText) {
+      // Text selection outside editable fields
+      menuItems.push(
+        { label: "Copy", role: "copy" }
+      );
+    }
+
+    // Image context menu
+    if (params.mediaType === "image") {
+      if (menuItems.length > 0) menuItems.push({ type: "separator" });
+      menuItems.push(
+        {
+          label: "Copy Image",
+          click: () => {
+            mainWindow.webContents.copyImageAt(params.x, params.y);
+          },
+        },
+        {
+          label: "Save Image As...",
+          click: () => {
+            mainWindow.webContents.downloadURL(params.srcURL);
+          },
+        }
+      );
+    }
+
+    // Link context menu
+    if (params.linkURL) {
+      if (menuItems.length > 0) menuItems.push({ type: "separator" });
+      menuItems.push(
+        {
+          label: "Copy Link",
+          click: () => {
+            clipboard.writeText(params.linkURL);
+          },
+        },
+        {
+          label: "Open Link in Browser",
+          click: () => {
+            shell.openExternal(params.linkURL);
+          },
+        }
+      );
+    }
+
+    if (menuItems.length > 0) {
+      const menu = Menu.buildFromTemplate(menuItems);
+      menu.popup();
+    }
+  });
+
   // Enable screen sharing: handle getDisplayMedia requests from the renderer
   // This uses Electron's desktopCapturer to provide native screen/window sources
   persistentSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ["screen", "window"] }).then((sources) => {
       if (sources.length > 0) {
         // Auto-select the first screen source (primary display)
-        // Note: only pass video — audio loopback is not reliably supported on all platforms
-        callback({ video: sources[0] });
+        // Pass audio loopback for system audio capture (supported on Windows)
+        // On macOS, system audio is not supported by desktopCapturer — pass undefined
+        const audioOpt = process.platform === "win32" ? "loopback" : undefined;
+        callback({ video: sources[0], audio: audioOpt });
       } else {
         callback({});
       }

@@ -62,6 +62,36 @@
     --ss-accent-rgb: 132 204 22;
   }
 
+  /* ---- Theme: Light ---- */
+  html[data-ss-theme="light"] {
+    --ss-brand-bg: #f4f6fb;
+    --ss-brand-panel: #ffffff;
+    --ss-brand-ink: #1a1d26;
+    --ss-brand-muted: #6b7280;
+    --ss-brand-outline: rgba(0, 0, 0, 0.08);
+    --ss-brand-glow: rgb(var(--ss-accent-rgb) / 0.10);
+  }
+
+  html[data-ss-theme="light"] body {
+    background-image: none;
+    background-color: var(--ss-brand-bg);
+  }
+
+  /* ---- Theme: AMOLED ---- */
+  html[data-ss-theme="amoled"] {
+    --ss-brand-bg: #000000;
+    --ss-brand-panel: #000000;
+    --ss-brand-ink: #e6f0ff;
+    --ss-brand-muted: #7a8494;
+    --ss-brand-outline: rgba(255, 255, 255, 0.06);
+    --ss-brand-glow: rgb(var(--ss-accent-rgb) / 0.18);
+  }
+
+  html[data-ss-theme="amoled"] body {
+    background-image: none;
+    background-color: #000;
+  }
+
   html,
   body,
   #root {
@@ -73,12 +103,13 @@
     color: var(--ss-brand-ink);
     background-color: var(--ss-brand-bg);
     background-image:
-      radial-gradient(1400px 960px at 8% -8%, var(--ss-brand-glow), transparent 58%),
-      radial-gradient(1200px 820px at 92% -4%, rgb(var(--ss-accent-rgb) / 0.26), transparent 62%),
-      radial-gradient(980px 980px at 50% 120%, rgba(255, 255, 255, 0.05), transparent 48%),
       linear-gradient(155deg, var(--ss-brand-bg) 0%, #040716 52%, var(--ss-brand-bg) 100%);
     background-attachment: fixed;
     position: relative;
+  }
+
+  html {
+    background-color: var(--ss-brand-bg);
   }
 
   #root {
@@ -107,6 +138,13 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* Prevent long-press text selection on interactive elements (mobile) */
+  button, a, [role="button"] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
   /* Custom Scrollbar for Webkit (Chrome, Edge, Safari) */
   ::-webkit-scrollbar {
     width: 6px;
@@ -132,62 +170,90 @@
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    background:
-      radial-gradient(1100px 820px at 10% 6%, rgb(var(--ss-accent-rgb) / 0.4), transparent 62%),
-      radial-gradient(900px 700px at 90% 10%, rgb(var(--ss-accent-rgb) / 0.3), transparent 64%),
-      radial-gradient(1000px 900px at 50% 120%, rgb(var(--ss-accent-rgb) / 0.18), transparent 60%);
+    background: transparent;
   }
 
   .nebula-shell {
-    background:
-      radial-gradient(140% 140% at 0% 0%, rgb(var(--ss-accent-rgb) / 0.2), transparent 55%),
-      linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(18px);
-    box-shadow:
-      0 28px 110px -70px rgba(0, 0, 0, 0.85),
-      0 0 0 1px rgb(var(--ss-accent-rgb) / 0.12) inset;
+    background: var(--ss-brand-panel);
+    border: none;
+    backdrop-filter: none;
+    box-shadow: none;
   }
 
   .glass-panel {
-    background:
-      radial-gradient(130% 140% at 0% 0%, rgb(var(--ss-accent-rgb) / 0.14), transparent 60%),
-      rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow:
-      0 20px 80px -60px rgba(0, 0, 0, 0.85),
-      0 0 0 1px rgb(var(--ss-accent-rgb) / 0.1) inset;
-    backdrop-filter: blur(14px);
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--ss-brand-outline);
+    box-shadow: none;
+    backdrop-filter: none;
+    border-radius: 0.75rem;
   }
 
   .ss-surface {
-    background:
-      radial-gradient(130% 120% at 0% 0%, rgb(var(--ss-accent-rgb) / 0.26), transparent 60%),
-      radial-gradient(120% 120% at 100% 0%, rgb(var(--ss-accent-rgb) / 0.16), transparent 58%),
-      linear-gradient(180deg, rgba(6, 10, 18, 0.88), rgba(4, 7, 12, 0.9));
+    background: var(--ss-brand-panel);
   }
 
   .bubble-me {
-    background: linear-gradient(135deg, rgb(var(--ss-accent-rgb) / 0.98) 0%, rgb(var(--ss-accent-rgb) / 0.76) 100%);
-    color: #f8faff;
-    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.35);
-    border: 1px solid rgb(var(--ss-accent-rgb) / 0.85);
-    box-shadow:
-      0 20px 60px -32px rgb(var(--ss-accent-rgb) / 0.9),
-      0 0 0 1px rgb(var(--ss-accent-rgb) / 0.25) inset;
+    background: rgb(var(--ss-accent-rgb));
+    color: #fff;
+    text-shadow: none;
+    border: none;
+    box-shadow: 0 1px 3px rgb(var(--ss-accent-rgb) / 0.3);
   }
 
   .bubble-other {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 16px 40px -34px rgba(0, 0, 0, 0.82);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--ss-brand-outline);
+    box-shadow: none;
   }
 
   .pill-accent {
-    background: linear-gradient(120deg, rgb(var(--ss-accent-rgb) / 0.95), rgb(var(--ss-accent-rgb) / 0.6));
-    color: #04121a;
-    border: 1px solid rgb(var(--ss-accent-rgb) / 0.55);
-    box-shadow: 0 12px 40px -30px rgb(var(--ss-accent-rgb) / 0.9);
+    background: rgb(var(--ss-accent-rgb));
+    color: #fff;
+    border: none;
+    box-shadow: none;
+  }
+
+  /* ---------- Light theme component overrides ---------- */
+  html[data-ss-theme="light"] .glass-panel {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+
+  html[data-ss-theme="light"] .bubble-other {
+    background: #f1f3f9;
+    border: 1px solid #e5e7eb;
+  }
+
+  html[data-ss-theme="light"] .bubble-me {
+    color: #fff;
+  }
+
+  html[data-ss-theme="light"] .ss-surface {
+    background: #fff;
+  }
+
+  html[data-ss-theme="light"] .nebula-shell {
+    background: #fff;
+  }
+
+  /* ---------- AMOLED theme component overrides ---------- */
+  html[data-ss-theme="amoled"] .glass-panel {
+    background: #0a0a0a;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  html[data-ss-theme="amoled"] .bubble-other {
+    background: #111;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+
+  html[data-ss-theme="amoled"] .ss-surface {
+    background: #000;
+  }
+
+  html[data-ss-theme="amoled"] .nebula-shell {
+    background: #000;
   }
 }
 
@@ -311,11 +377,30 @@
   @apply bg-white/10 rounded-full;
 }
 
-/* Mobile safe area — push content below notch/status bar */
+/* Mobile safe area — push content below notch/status bar and above home indicator */
 @supports (padding: env(safe-area-inset-top)) {
-  @media (max-width: 768px) {
-    #root {
-      padding-top: env(safe-area-inset-top);
-    }
+  #root {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    min-height: 100dvh;
+    box-sizing: border-box;
   }
+
+  html, body, #root {
+    height: auto;
+    min-height: 100%;
+  }
+}
+
+/* Light theme scrollbar overrides */
+html[data-ss-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+html[data-ss-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+html[data-ss-theme="light"] .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
 }

@@ -246,6 +246,14 @@ export function useCallManager(socket, currentUser) {
     }
   }, [socket, videoInputDeviceId]);
 
+  const flipCamera = useCallback(async () => {
+    if (!webrtcRef.current || !callStateRef.current) return;
+    const track = await webrtcRef.current.flipCamera();
+    if (track) {
+      setLocalStream(webrtcRef.current.getLocalStream());
+    }
+  }, []);
+
   const toggleScreenShare = useCallback(async (settings) => {
     if (!webrtcRef.current || !callStateRef.current) return;
 
@@ -502,6 +510,7 @@ export function useCallManager(socket, currentUser) {
     leaveCall,
     toggleMute,
     toggleVideo,
+    flipCamera,
     toggleScreenShare,
   };
 }

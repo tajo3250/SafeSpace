@@ -6,7 +6,7 @@ const crypto = require("crypto");
 const jwt = require("jsonwebtoken");
 
 const { users, resetTokens, saveUsers, saveResetTokens } = require("../data/store");
-const { SECRET_KEY, signUserToken, signVerificationToken } = require("../utils/auth");
+const { SECRET_KEY, signUserToken, signVerificationToken, getUserFromRequest } = require("../utils/auth");
 const { sendVerificationEmail, sendResetEmail } = require("../utils/email");
 
 const router = express.Router();
@@ -111,6 +111,9 @@ router.post("/api/login", async (req, res) => {
       username: user.username,
       email: user.email,
       createdAt: user.createdAt,
+      profilePicture: user.profilePicture || null,
+      profilePictureThumbnail: user.profilePictureThumbnail || null,
+      aboutMe: user.aboutMe || "",
     },
   });
 });
@@ -134,6 +137,9 @@ router.post("/api/refresh-token", (req, res) => {
         username: user.username,
         email: user.email,
         createdAt: user.createdAt,
+        profilePicture: user.profilePicture || null,
+        profilePictureThumbnail: user.profilePictureThumbnail || null,
+        aboutMe: user.aboutMe || "",
       },
     });
   } catch {
@@ -190,6 +196,46 @@ router.post("/api/reset-password", async (req, res) => {
   saveResetTokens();
 
   res.json({ message: "Password updated successfully." });
+});
+
+// GET user settings (synced preferences)
+router.get("/api/settings", (req, res) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ message: "Unauthorized" });
+
+  res.json({ settings: user.settings || {} });
+});
+
+// PUT user settings (synced preferences)
+router.put("/api/settings", (req, res) => {
+  const user = getUserFromRequest(req);
+  if (!user) return res.status(401).json({ message: "Unauthorized" });
+
+  const incoming = req.body;
+  if (!incoming || typeof incoming !== "object") {
+    return res.status(400).json({ message: "Invalid settings payload" });
+  }
+
+  // Whitelist allowed setting keys and validate values
+  const VALID_TEXT_SIZES = ["sm", "md", "lg"];
+  const VALID_ACCENTS = ["teal", "blue", "purple", "rose", "amber", "lime"];
+  const VALID_THEMES = ["dark", "light", "amoled"];
+
+  const clean = {};
+  if (incoming.textSize !== undefined) {
+    clean.textSize = VALID_TEXT_SIZES.includes(incoming.textSize) ? incoming.textSize : "md";
+  }
+  if (incoming.accent !== undefined) {
+    clean.accent = VALID_ACCENTS.includes(incoming.accent) ? incoming.accent : "teal";
+  }
+  if (incoming.theme !== undefined) {
+    clean.theme = VALID_THEMES.includes(incoming.theme) ? incoming.theme : "dark";
+  }
+
+  user.settings = { ...(user.settings || {}), ...clean };
+  saveUsers();
+
+  res.json({ settings: user.settings });
 });
 
 module.exports = router;

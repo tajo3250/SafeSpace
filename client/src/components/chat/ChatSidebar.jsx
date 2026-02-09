@@ -22,6 +22,7 @@ export default function ChatSidebar({
     toggleMuteConversation,
     activeCallMap,
     allUsers,
+    markConversationRead,
 }) {
     const [contextMenu, setContextMenu] = useState(null); // { x, y, convId }
     const contextRef = useRef(null);
@@ -46,12 +47,16 @@ export default function ChatSidebar({
     return (
         <aside
             className={[
-                "z-50 h-full w-72 lg:w-80 max-w-[88vw] shrink-0 border-r border-white/10 ss-surface backdrop-blur-xl flex flex-col shadow-[0_24px_80px_-60px_rgba(0,0,0,0.85)]",
+                "z-50 h-full w-72 lg:w-80 max-w-[88vw] shrink-0 border-r border-[var(--ss-brand-outline)] ss-surface flex flex-col",
                 "fixed inset-y-0 left-0 transform transition-transform duration-200 ease-out md:static md:translate-x-0",
                 isSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
             ].join(" ")}
+            style={{
+                paddingTop: "env(safe-area-inset-top, 0px)",
+                paddingBottom: "env(safe-area-inset-bottom, 0px)",
+            }}
         >
-            <div className="px-4 py-4 border-b border-white/10 bg-white/5 flex items-center justify-between gap-3">
+            <div className="px-4 py-4 border-b border-[var(--ss-brand-outline)] flex items-center justify-between gap-3">
                 <div className="flex flex-1 flex-col items-start gap-2 min-w-0">
                     <img
                         src={logoWordmark}
@@ -65,14 +70,14 @@ export default function ChatSidebar({
 
                 <button
                     onClick={handleLogout}
-                    className="text-xs font-semibold px-3.5 py-2 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[rgb(var(--ss-accent-rgb)/0.4)] text-slate-50 transition-all shadow-[0_12px_40px_-30px_rgba(0,0,0,0.9)]"
+                    className="text-xs font-semibold px-3.5 py-2 rounded-lg bg-[var(--ss-brand-outline)] hover:opacity-80 text-[var(--ss-brand-ink)] transition-all"
                 >
                     Logout
                 </button>
             </div>
 
             {/* Search users (DMs) */}
-            <div className="p-4 border-b border-white/10 bg-white/[0.03]">
+            <div className="p-4 border-b border-[var(--ss-brand-outline)]">
                 <div className="flex items-center text-[11px] uppercase tracking-[0.22em] text-slate-400 font-semibold mb-2">
                     <span>Direct Messages</span>
                 </div>
@@ -81,7 +86,7 @@ export default function ChatSidebar({
                     placeholder="Search usernames to DM"
                     value={userSearchTerm}
                     onChange={(e) => setUserSearchTerm(e.target.value)}
-                    className="w-full rounded-xl bg-white/[0.05] border border-white/10 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-[rgb(var(--ss-accent-rgb)/0.40)] transition-all shadow-[0_12px_48px_-34px_rgba(0,0,0,0.85)]"
+                    className="w-full rounded-lg bg-[var(--ss-brand-outline)] border border-[var(--ss-brand-outline)] px-3 py-2.5 text-sm text-[var(--ss-brand-ink)] placeholder:text-[var(--ss-brand-muted)] outline-none focus:ring-2 focus:ring-[rgb(var(--ss-accent-rgb)/0.40)] transition-all"
                 />
 
                 <div className="mt-3 max-h-48 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
@@ -110,7 +115,7 @@ export default function ChatSidebar({
                     <span className="text-xs font-semibold text-slate-200 uppercase tracking-[0.22em]">Conversations</span>
                     <button
                         onClick={() => setIsCreatingGroup(true)}
-                        className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 hover:border-[rgb(var(--ss-accent-rgb)/0.4)] text-slate-100 transition-all shadow-[0_12px_40px_-30px_rgba(0,0,0,0.85)]"
+                        className="px-2.5 py-1.5 rounded-lg bg-[var(--ss-brand-outline)] hover:opacity-80 text-[var(--ss-brand-ink)] transition-all"
                         title="Create group"
                     >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -140,11 +145,19 @@ export default function ChatSidebar({
                             const active = conv.id === selectedConversationId;
                             const callInfo = activeCallMap?.[conv.id];
 
+                            // DM: find the other user's profile picture
+                            let dmPic = null;
+                            if (conv.type === "dm" && currentUser) {
+                                const otherId = conv.memberIds?.find((id) => id !== currentUser.id);
+                                const otherUser = allUsers?.find((u) => u.id === otherId);
+                                dmPic = otherUser?.profilePictureThumbnail || otherUser?.profilePicture || null;
+                            }
+
                             const base =
-                                "w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl border text-sm transition-all duration-200 group overflow-hidden relative";
+                                "w-full flex items-center gap-3 px-3.5 py-3 rounded-lg text-sm transition-all duration-200 group overflow-hidden relative";
                             const activeCls = active
-                                ? "bg-[radial-gradient(circle_at_10%_20%,rgb(var(--ss-accent-rgb)/0.20),rgba(13,18,30,0.95))] border-[rgb(var(--ss-accent-rgb)/0.45)] text-white shadow-[0_18px_60px_-48px_rgb(var(--ss-accent-rgb)/0.9)]"
-                                : "bg-white/[0.02] border-white/5 hover:border-white/10 hover:bg-white/[0.06]";
+                                ? "bg-[rgb(var(--ss-accent-rgb)/0.12)] text-[var(--ss-brand-ink)] font-medium"
+                                : "hover:bg-[var(--ss-brand-outline)] text-[var(--ss-brand-muted)]";
                             const unreadCls = unread > 0 ? "ring-1 ring-[rgb(var(--ss-accent-rgb)/0.4)]" : "";
 
                             const isMuted = mutedConversations?.has?.(conv.id);
@@ -161,7 +174,16 @@ export default function ChatSidebar({
                                         }}
                                         className={`${base} ${activeCls} ${unreadCls}`}
                                     >
-                                        <span className={`truncate ${active ? "text-white font-medium" : "text-slate-200 group-hover:text-white"}`}>
+                                        {dmPic ? (
+                                            <img src={dmPic} alt="" className="h-6 w-6 rounded-full object-cover shrink-0 border border-white/10" draggable={false} />
+                                        ) : conv.type === "dm" ? (
+                                            <div className="h-6 w-6 rounded-full bg-[rgb(var(--ss-accent-rgb)/0.15)] border border-[rgb(var(--ss-accent-rgb)/0.25)] flex items-center justify-center shrink-0">
+                                                <span className="text-[10px] font-semibold text-[rgb(var(--ss-accent-rgb))]">
+                                                    {conversationLabel(conv).replace(/^DM:\s*/, "")[0]?.toUpperCase() || "?"}
+                                                </span>
+                                            </div>
+                                        ) : null}
+                                        <span className={`truncate flex-1 text-left ${active ? "text-white font-medium" : "text-slate-200 group-hover:text-white"}`}>
                                             {isMuted && (
                                                 <svg className="inline-block mr-1.5 -mt-0.5 opacity-50" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                                     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
@@ -203,20 +225,20 @@ export default function ChatSidebar({
             </div>
 
             {/* Sidebar actions */}
-            <div className="p-4 border-t border-white/10 bg-white/5 space-y-2">
+            <div className="p-4 border-t border-[var(--ss-brand-outline)] space-y-2">
                 <button
                     onClick={() => {
                         navigate("/settings");
                         setIsSidebarOpen(false);
                     }}
-                    className="w-full px-4 py-2 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 text-sm text-center text-slate-100 transition-all shadow-[0_14px_48px_-36px_rgba(0,0,0,0.9)]"
+                    className="w-full px-4 py-2 rounded-lg bg-[var(--ss-brand-outline)] hover:opacity-80 text-sm text-center text-[var(--ss-brand-ink)] transition-all"
                 >
                     Settings
                 </button>
 
                 <button
                     onClick={() => setIsSidebarOpen(false)}
-                    className="w-full px-4 py-2 rounded-xl bg-white/10 hover:bg-white/16 border border-white/10 text-sm md:hidden text-slate-100"
+                    className="w-full px-4 py-2 rounded-lg bg-[var(--ss-brand-outline)] hover:opacity-80 text-sm md:hidden text-[var(--ss-brand-ink)]"
                 >
                     Close
                 </button>
@@ -225,16 +247,33 @@ export default function ChatSidebar({
             {contextMenu && (
                 <div
                     ref={contextRef}
-                    className="fixed z-[60] min-w-[140px] rounded-xl bg-[#0c111d]/95 border border-white/12 shadow-[0_20px_60px_-30px_rgba(0,0,0,0.9)] backdrop-blur-2xl overflow-hidden py-1"
+                    className="fixed z-[60] min-w-[180px] rounded-xl bg-[var(--ss-brand-panel)] border border-[var(--ss-brand-outline)] shadow-[0_16px_48px_-12px_rgba(0,0,0,0.6)] overflow-hidden py-1"
                     style={{ top: contextMenu.y, left: contextMenu.x }}
                 >
+                    {/* Mark as Read */}
+                    {unreadCounts[contextMenu.convId] > 0 && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (markConversationRead) markConversationRead(contextMenu.convId);
+                                setContextMenu(null);
+                            }}
+                            className="w-full text-left px-4 py-2.5 text-sm text-[var(--ss-brand-ink)] hover:bg-[rgb(var(--ss-accent-rgb)/0.1)] transition-colors flex items-center gap-2.5"
+                        >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            Mark as Read
+                        </button>
+                    )}
+                    {/* Mute / Unmute */}
                     <button
                         onClick={(e) => {
                             e.stopPropagation();
                             toggleMuteConversation(contextMenu.convId);
                             setContextMenu(null);
                         }}
-                        className="w-full text-left px-4 py-2.5 text-sm text-slate-100 hover:bg-white/10 transition-colors flex items-center gap-2"
+                        className="w-full text-left px-4 py-2.5 text-sm text-[var(--ss-brand-ink)] hover:bg-[rgb(var(--ss-accent-rgb)/0.1)] transition-colors flex items-center gap-2.5"
                     >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             {mutedConversations?.has?.(contextMenu.convId) ? (

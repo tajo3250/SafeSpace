@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { parseMessagePayload } from "../../utils/messagePayload";
 import { resolveAttachmentUrl } from "../../utils/attachmentUrls";
 import {
@@ -12,6 +12,81 @@ import { getUser as getStoredUser } from "../../utils/authStorage";
 import LinkPreview from "./LinkPreview";
 import ReactionDisplay from "./ReactionDisplay";
 import ReactionPicker from "./ReactionPicker";
+import UserProfilePopup from "./UserProfilePopup";
+
+// Discord-style context menu for messages
+function MessageContextMenu({ x, y, onClose, canEdit, canDelete, onReply, onCopy, onEdit, onDelete, onReact }) {
+    const menuRef = useRef(null);
+
+    useEffect(() => {
+        // Reposition if menu overflows viewport
+        const el = menuRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+            el.style.left = `${Math.max(4, window.innerWidth - rect.width - 8)}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+            el.style.top = `${Math.max(4, window.innerHeight - rect.height - 8)}px`;
+        }
+    }, [x, y]);
+
+    useEffect(() => {
+        const close = (e) => {
+            if (menuRef.current && !menuRef.current.contains(e.target)) onClose();
+        };
+        const closeCtx = (e) => { e.preventDefault(); onClose(); };
+        document.addEventListener("click", close);
+        document.addEventListener("contextmenu", closeCtx);
+        return () => {
+            document.removeEventListener("click", close);
+            document.removeEventListener("contextmenu", closeCtx);
+        };
+    }, [onClose]);
+
+    const itemCls = "w-full text-left flex items-center gap-2.5 px-3.5 py-2 text-sm transition-colors";
+
+    return (
+        <div
+            ref={menuRef}
+            className="fixed z-[70] min-w-[180px] rounded-xl bg-[var(--ss-brand-panel)] border border-[var(--ss-brand-outline)] shadow-[0_16px_48px_-12px_rgba(0,0,0,0.6)] overflow-hidden py-1 animate-in fade-in zoom-in-95 duration-150"
+            style={{ top: y, left: x }}
+        >
+            <button onClick={() => { onReply(); onClose(); }} className={`${itemCls} text-[var(--ss-brand-ink)] hover:bg-[rgb(var(--ss-accent-rgb)/0.1)]`}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5v0a5.5 5.5 0 0 1-5.5 5.5H11" /></svg>
+                Reply
+            </button>
+            <button onClick={() => { onCopy(); onClose(); }} className={`${itemCls} text-[var(--ss-brand-ink)] hover:bg-[rgb(var(--ss-accent-rgb)/0.1)]`}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                Copy Text
+            </button>
+            {onReact && (
+                <button onClick={() => { onReact(); onClose(); }} className={`${itemCls} text-[var(--ss-brand-ink)] hover:bg-[rgb(var(--ss-accent-rgb)/0.1)]`}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" /></svg>
+                    Add Reaction
+                </button>
+            )}
+            {canEdit && (
+                <>
+                    <div className="my-1 h-px bg-[var(--ss-brand-outline)]" />
+                    <button onClick={() => { onEdit(); onClose(); }} className={`${itemCls} text-[var(--ss-brand-ink)] hover:bg-[rgb(var(--ss-accent-rgb)/0.1)]`}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                        Edit Message
+                    </button>
+                </>
+            )}
+            {canDelete && (
+                <>
+                    {!canEdit && <div className="my-1 h-px bg-[var(--ss-brand-outline)]" />}
+                    <button onClick={() => { onDelete(); onClose(); }} className={`${itemCls} text-red-500 hover:bg-red-500/10`}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                        Delete Message
+                    </button>
+                </>
+            )}
+        </div>
+    );
+}
 
 function DayDivider({ label }) {
     return (
@@ -56,10 +131,14 @@ export default function MessageList({
     gifFavoriteKeys,
     onToggleGifFavorite,
     attachmentBlobUrls,
-    onReactToMessage
+    onReactToMessage,
+    onStartDm
 }) {
     const didNotifyReadyRef = useRef(false);
     const [reactionPicker, setReactionPicker] = useState({ open: false, messageId: null, rect: null });
+    const [contextMenu, setContextMenu] = useState(null); // { x, y, msgId, canEdit, canDelete, safeDisplayText, replyPreviewText, msgRef }
+    const [profilePopup, setProfilePopup] = useState(null); // { x, y, userId }
+    const longPressTimerRef = useRef(null);
 
     const openReactionPicker = useCallback((messageId, event) => {
         const rect = event.currentTarget.getBoundingClientRect();
@@ -76,6 +155,18 @@ export default function MessageList({
         }
         closeReactionPicker();
     }, [reactionPicker.messageId, onReactToMessage, closeReactionPicker]);
+
+    const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+    const openContextMenu = useCallback((e, msgData) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setContextMenu({
+            x: e.clientX || e.touches?.[0]?.clientX || 0,
+            y: e.clientY || e.touches?.[0]?.clientY || 0,
+            ...msgData,
+        });
+    }, []);
 
     const resolvedUser = useMemo(() => {
         if (currentUser?.id || currentUser?.username) return currentUser;
@@ -318,20 +409,65 @@ export default function MessageList({
                     id={`msg-${msg.id}`}
                     data-msg-id={msg.id}
                     className={"mt-2 scroll-mt-24 group px-1"}
+                    onContextMenu={(e) => {
+                        openContextMenu(e, {
+                            msgId: msg.id,
+                            canEdit,
+                            canDelete,
+                            safeDisplayText,
+                            replyPreviewText,
+                            msg,
+                        });
+                    }}
+                    onTouchStart={(e) => {
+                        const touch = e.touches[0];
+                        longPressTimerRef.current = setTimeout(() => {
+                            openContextMenu({ preventDefault: () => {}, stopPropagation: () => {}, clientX: touch.clientX, clientY: touch.clientY }, {
+                                msgId: msg.id,
+                                canEdit,
+                                canDelete,
+                                safeDisplayText,
+                                replyPreviewText,
+                                msg,
+                            });
+                        }, 500);
+                    }}
+                    onTouchEnd={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
+                    onTouchMove={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
                 >
                     <div className="flex items-start gap-3">
                         {showMeta ? (
-                            <div
-                                className={[
-                                    "shrink-0 mt-0.5 h-9 w-9 rounded-xl border flex items-center justify-center font-semibold shadow-[0_12px_30px_-26px_rgba(0,0,0,0.8)] transition-transform hover:scale-105 backdrop-blur",
-                                    isMe
-                                        ? "bg-[radial-gradient(circle_at_40%_40%,rgb(var(--ss-accent-rgb)/0.35),rgba(12,18,30,0.9))] border-[rgb(var(--ss-accent-rgb)/0.45)] text-[rgb(var(--ss-accent-rgb))]"
-                                        : "bg-gradient-to-br from-white/10 via-white/5 to-white/10 border-white/10 text-slate-200",
-                                ].join(" ")}
-                                title={displayName}
-                            >
-                                <span className="text-xs">{initials}</span>
-                            </div>
+                            (() => {
+                                const sender = allUsers?.find(u => u.id === msg.senderId);
+                                const pic = sender?.profilePictureThumbnail || sender?.profilePicture;
+                                return (
+                                    <div
+                                        className={[
+                                            "shrink-0 mt-0.5 h-9 w-9 rounded-xl border flex items-center justify-center font-semibold shadow-[0_12px_30px_-26px_rgba(0,0,0,0.8)] transition-transform hover:scale-105 backdrop-blur cursor-pointer overflow-hidden",
+                                            isMe
+                                                ? "bg-[radial-gradient(circle_at_40%_40%,rgb(var(--ss-accent-rgb)/0.35),rgba(12,18,30,0.9))] border-[rgb(var(--ss-accent-rgb)/0.45)] text-[rgb(var(--ss-accent-rgb))]"
+                                                : "bg-gradient-to-br from-white/10 via-white/5 to-white/10 border-white/10 text-slate-200",
+                                        ].join(" ")}
+                                        title={displayName}
+                                        data-user-id={msg.senderId}
+                                        onContextMenu={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            setProfilePopup({ x: e.clientX, y: e.clientY, userId: msg.senderId });
+                                        }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setProfilePopup({ x: e.clientX, y: e.clientY, userId: msg.senderId });
+                                        }}
+                                    >
+                                        {pic ? (
+                                            <img src={pic} alt={displayName} className="h-full w-full object-cover" draggable={false} />
+                                        ) : (
+                                            <span className="text-xs">{initials}</span>
+                                        )}
+                                    </div>
+                                );
+                            })()
                         ) : (
                             <div className="shrink-0 w-8" />
                         )}
@@ -693,8 +829,8 @@ export default function MessageList({
                                             </div>
                                         </div>
 
-                                        {/* ACTIONS - always visible on mobile, hover-reveal on desktop */}
-                                        <div className="flex items-center gap-2 shrink-0 opacity-60 md:opacity-0 md:group-hover:opacity-100 transition-opacity scale-95 md:scale-90 md:group-hover:scale-100">
+                                        {/* ACTIONS - hidden on mobile (use long-press context menu instead), hover-reveal on desktop */}
+                                        <div className="hidden md:flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity scale-90 group-hover:scale-100">
                                             {onReactToMessage && (
                                                 <button
                                                     onClick={(e) => openReactionPicker(msg.id, e)}
@@ -827,7 +963,8 @@ export default function MessageList({
         onToggleGifFavorite,
         attachmentBlobUrls,
         onReactToMessage,
-        openReactionPicker
+        openReactionPicker,
+        openContextMenu
     ]);
 
     return (
@@ -897,6 +1034,54 @@ export default function MessageList({
                 onSelect={handlePickReaction}
                 onClose={closeReactionPicker}
             />
+            {contextMenu && (
+                <MessageContextMenu
+                    x={contextMenu.x}
+                    y={contextMenu.y}
+                    canEdit={contextMenu.canEdit}
+                    canDelete={contextMenu.canDelete}
+                    onClose={closeContextMenu}
+                    onReply={() => {
+                        if (onReplyToMessage && contextMenu.msg) {
+                            onReplyToMessage(contextMenu.msg, contextMenu.replyPreviewText);
+                        } else {
+                            setReplyToId(contextMenu.msgId);
+                        }
+                    }}
+                    onCopy={() => {
+                        const text = contextMenu.safeDisplayText || "";
+                        if (navigator.clipboard) {
+                            navigator.clipboard.writeText(text).catch(() => {});
+                        }
+                    }}
+                    onEdit={contextMenu.canEdit ? () => {
+                        setEditingMessageId(contextMenu.msgId);
+                        setInput(contextMenu.safeDisplayText);
+                    } : undefined}
+                    onDelete={contextMenu.canDelete ? () => {
+                        handleDeleteMessage(contextMenu.msgId);
+                    } : undefined}
+                    onReact={onReactToMessage ? () => {
+                        // Create a synthetic rect near the context menu position to open the reaction picker there
+                        setReactionPicker({
+                            open: true,
+                            messageId: contextMenu.msgId,
+                            rect: { top: contextMenu.y, left: contextMenu.x, bottom: contextMenu.y, right: contextMenu.x, width: 0, height: 0 },
+                        });
+                    } : undefined}
+                />
+            )}
+            {profilePopup && (
+                <UserProfilePopup
+                    x={profilePopup.x}
+                    y={profilePopup.y}
+                    userId={profilePopup.userId}
+                    allUsers={allUsers}
+                    currentUserId={resolvedUser?.id}
+                    onClose={() => setProfilePopup(null)}
+                    onStartDm={onStartDm}
+                />
+            )}
         </div>
     );
 }

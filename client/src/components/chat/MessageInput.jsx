@@ -179,7 +179,7 @@ export default function MessageInput({
     };
 
     return (
-        <footer className="shrink-0 bg-transparent pb-[calc(env(safe-area-inset-bottom,0px)+4px)] pt-3 px-4 md:px-6">
+        <footer className="shrink-0 bg-transparent pb-1 pt-3 px-4 md:px-6">
             <div
                 className="w-full relative"
                 onDrop={handleDrop}

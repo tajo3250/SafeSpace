@@ -6,6 +6,7 @@ import { API_BASE } from "../config";
 import BrandHeader from "../components/brand/BrandHeader";
 import * as E2EE from "../utils/e2ee";
 import { setAuth, getToken, getUser } from "../utils/authStorage";
+import { useSettings } from "../context/settings.jsx";
 
 // --- E2EE key bundle helpers (ciphertext-only backup) ---
 const E2EE_LOCAL_KEY_PREFIX = "e2eeKeyPair:";
@@ -309,6 +310,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
+  const { refreshFromServer } = useSettings();
 
   // Auto-redirect to chat if already logged in
   useEffect(() => {
@@ -332,6 +334,9 @@ export default function Login() {
       if (!res.ok) return alert(data.message);
 
       setAuth(data.token, data.user);
+
+      // Sync settings from server for this account
+      refreshFromServer();
 
       // E2EE: restore/create stable keys BEFORE entering chat (prevents key resets on new domains)
       try {

@@ -147,8 +147,16 @@ export default function Chat() {
   // --- WebRTC calling ---
   const {
     callState, incomingCall, localStream, screenStream, remoteStreams, remoteMediaState,
-    streamUpdateTick, activeCallMap, startCall, acceptCall, rejectCall, leaveCall, toggleMute, toggleVideo, toggleScreenShare,
+    streamUpdateTick, activeCallMap, startCall, acceptCall, rejectCall, leaveCall, toggleMute, toggleVideo, flipCamera, toggleScreenShare,
   } = useCallManager(socket, currentUser);
+
+  // Detect multiple cameras for flip button
+  const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
+  useEffect(() => {
+    navigator.mediaDevices?.enumerateDevices?.()
+      .then((devices) => setHasMultipleCameras(devices.filter((d) => d.kind === "videoinput").length >= 2))
+      .catch(() => {});
+  }, [callState?.localVideoEnabled]);
 
   const [replyToId, setReplyToId] = useState(null);
   const [editingMessageId, setEditingMessageId] = useState(null);
@@ -1838,6 +1846,21 @@ export default function Chat() {
       });
     });
 
+    // PROFILE UPDATED (real-time)
+    socket.on("user:profileUpdated", (data) => {
+      if (!data || !data.userId) return;
+      setAllUsers((prev) =>
+        prev.map((u) => {
+          if (u.id !== data.userId) return u;
+          const updated = { ...u };
+          if (data.profilePicture !== undefined) updated.profilePicture = data.profilePicture;
+          if (data.profilePictureThumbnail !== undefined) updated.profilePictureThumbnail = data.profilePictureThumbnail;
+          if (data.aboutMe !== undefined) updated.aboutMe = data.aboutMe;
+          return updated;
+        })
+      );
+    });
+
     // GROUP: server asks this user to join the room immediately (and get history)
     socket.on("group:join_room", ({ conversationId } = {}) => {
       if (!conversationId) return;
@@ -1944,6 +1967,7 @@ export default function Chat() {
       socket.off("conversation:removed");
       socket.off("conversation:deleted");
       socket.off("user:verified");
+      socket.off("user:profileUpdated");
       socket.off("group:join_room");
       socket.off("group:keys_delivered");
       socket.disconnect();
@@ -4114,20 +4138,12 @@ export default function Chat() {
     <div
       className="relative w-full text-slate-100 overflow-hidden flex flex-col"
       style={{
-        height: "calc(100dvh - var(--ss-banner-h, 0px))",
-        backgroundColor: "#020308",
-        backgroundImage:
-          "radial-gradient(1000px 720px at 12% 0%, rgb(var(--ss-accent-rgb) / 0.36), transparent 62%), radial-gradient(900px 600px at 88% 8%, rgb(var(--ss-accent-rgb) / 0.24), transparent 64%), radial-gradient(800px 700px at 50% 120%, rgb(var(--ss-accent-rgb) / 0.14), transparent 60%)",
+        height: "calc(100dvh - var(--ss-banner-h, 0px) - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))",
+        backgroundColor: "var(--ss-brand-bg)",
       }}
     >
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-24 -top-36 h-96 w-96 rounded-full bg-[radial-gradient(circle_at_30%_30%,rgb(var(--ss-accent-rgb)/0.42),transparent)] blur-3xl opacity-90" />
-        <div className="absolute right-[-12%] top-8 h-[28rem] w-[28rem] rounded-full bg-[radial-gradient(circle_at_40%_35%,rgb(var(--ss-accent-rgb)/0.28),transparent)] blur-3xl opacity-80" />
-        <div className="absolute inset-x-0 bottom-[-40%] h-[50%] bg-[radial-gradient(60%_60%_at_50%_50%,rgb(var(--ss-accent-rgb)/0.18),transparent)] blur-2xl" />
-      </div>
 
-      <div className="relative h-full w-full px-3 py-4 md:px-6">
-        <div className="relative flex h-full w-full overflow-hidden rounded-3xl nebula-shell">
+      <div className="relative flex h-full w-full overflow-hidden">
           {/* Mobile backdrops */}
           {isSidebarOpen && (
             <button
@@ -4166,15 +4182,22 @@ export default function Chat() {
             toggleMuteConversation={toggleMuteConversation}
             activeCallMap={activeCallMap}
             allUsers={allUsers}
+            markConversationRead={(convId) => {
+              setUnreadCounts((prev) => {
+                const copy = { ...prev };
+                delete copy[convId];
+                return copy;
+              });
+            }}
           />
 
           {/* MAIN CHAT */}
-          <section className="flex-1 min-w-0 h-full min-h-0 flex flex-col ss-surface backdrop-blur-xl border-x border-white/5 shadow-[0_24px_120px_-70px_rgba(0,0,0,0.85)]">
+          <section className="flex-1 min-w-0 h-full min-h-0 flex flex-col ss-surface border-x border-[var(--ss-brand-outline)]">
             {/* Header */}
-            <header className="shrink-0 border-b border-white/10 bg-white/10 backdrop-blur-xl shadow-[0_18px_60px_-50px_rgba(0,0,0,0.75)]">
-              <div className="h-16 px-5 flex items-center gap-3">
+            <header className="shrink-0 border-b border-[var(--ss-brand-outline)] bg-[var(--ss-brand-panel)]">
+              <div className="h-14 px-5 flex items-center gap-3">
                 <button
-                  className="md:hidden inline-flex items-center justify-center h-11 w-11 rounded-xl bg-white/10 hover:bg-white/16 border border-white/10 text-slate-100 shadow-[0_12px_40px_-28px_rgba(0,0,0,0.85)]"
+                  className="md:hidden inline-flex items-center justify-center h-10 w-10 rounded-lg bg-[var(--ss-brand-outline)] hover:opacity-80 text-[var(--ss-brand-ink)]"
                   aria-label="Open sidebar"
                   onClick={() => setIsSidebarOpen(true)}
                 >
@@ -4290,9 +4313,11 @@ export default function Chat() {
                 streamUpdateTick={streamUpdateTick}
                 onToggleMute={toggleMute}
                 onToggleVideo={toggleVideo}
+                onFlipCamera={flipCamera}
                 onToggleScreenShare={toggleScreenShare}
                 onLeaveCall={leaveCall}
                 allUsers={allUsers}
+                hasMultipleCameras={hasMultipleCameras}
                 conversationLabel={conversationLabel(
                   conversations.find((c) => c.id === callState.conversationId)
                 ).replace(/^DM: /, "")}
@@ -4332,6 +4357,7 @@ export default function Chat() {
               onToggleGifFavorite={toggleGifFavorite}
               attachmentBlobUrls={attachmentBlobUrls}
               onReactToMessage={handleReactToMessage}
+              onStartDm={startDmWith}
             />
 
             {/* Composer */}
@@ -5014,7 +5040,6 @@ export default function Chat() {
         />
       )}
 
-      </div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 // client/src/components/chat/call/CallControls.jsx
-// Bottom control bar for active calls: Mute, Camera, Screen Share, Expand, End Call.
+// Bottom control bar for active calls: Mute, Camera, Flip Camera, Screen Share, Expand, End Call.
 
 import React from "react";
 
@@ -10,10 +10,12 @@ export default function CallControls({
   isExpanded,
   onToggleMute,
   onToggleVideo,
+  onFlipCamera,
   onToggleScreenShare,
   onToggleExpand,
   onLeaveCall,
   isFullscreen,
+  hasMultipleCameras,
 }) {
   return (
     <div className="flex items-center justify-center gap-3 py-3 pb-[calc(env(safe-area-inset-bottom,0px)+12px)]">
@@ -68,6 +70,22 @@ export default function CallControls({
           </svg>
         )}
       </button>
+
+      {/* Flip Camera — only visible when video is on and device has multiple cameras */}
+      {localVideoEnabled && hasMultipleCameras && (
+        <button
+          onClick={onFlipCamera}
+          title="Flip camera"
+          className="inline-flex items-center justify-center h-12 w-12 rounded-full bg-white/10 hover:bg-white/20 border border-white/10 text-slate-100 transition-all"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5" />
+            <path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5" />
+            <polyline points="16 3 19 6 16 9" />
+            <polyline points="8 21 5 18 8 15" />
+          </svg>
+        </button>
+      )}
 
       {/* Screen Share */}
       <button

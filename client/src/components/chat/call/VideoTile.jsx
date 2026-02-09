@@ -18,9 +18,13 @@ export default function VideoTile({
   streamUpdateTick,
   onFocus,
   onExpand,
+  profilePicture,
+  onVolumeControl,
+  onTheater,
 }) {
   const videoRef = useRef(null);
   const [hasLiveVideo, setHasLiveVideo] = useState(false);
+  const longPressTimerRef = useRef(null);
 
   // Attach stream to video element
   useEffect(() => {
@@ -89,6 +93,21 @@ export default function VideoTile({
         e.stopPropagation();
         if (onExpand) onExpand();
       }}
+      onContextMenu={(e) => {
+        if (isLocal || !onVolumeControl) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onVolumeControl(e.clientX, e.clientY);
+      }}
+      onTouchStart={(e) => {
+        if (isLocal || !onVolumeControl) return;
+        const touch = e.touches[0];
+        longPressTimerRef.current = setTimeout(() => {
+          onVolumeControl(touch.clientX, touch.clientY);
+        }, 500);
+      }}
+      onTouchEnd={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
+      onTouchMove={() => { if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current); }}
       className={`relative flex items-center justify-center overflow-hidden rounded-2xl cursor-pointer group
         ${isSmall ? "h-28 w-40 shrink-0" : "h-full w-full min-h-[100px]"}
         ${isScreenShare ? "bg-black" : "bg-[#0a1220]/90"}
@@ -101,7 +120,7 @@ export default function VideoTile({
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isLocal}
+        muted
         className={`absolute inset-0 h-full w-full transition-opacity duration-200
           ${showVideo ? "opacity-100" : "opacity-0 pointer-events-none"}
           ${isLocal && !isScreenShare ? "scale-x-[-1]" : ""}
@@ -113,12 +132,22 @@ export default function VideoTile({
       {/* Avatar fallback for voice-only / video-off */}
       {!showVideo && (
         <div className="flex flex-col items-center gap-2">
-          <div
-            className={`rounded-full bg-[rgb(var(--ss-accent-rgb)/0.2)] border-2 border-[rgb(var(--ss-accent-rgb)/0.35)] flex items-center justify-center font-bold text-white
-            ${isSmall ? "h-10 w-10 text-base" : "h-16 w-16 text-xl"}`}
-          >
-            {initial}
-          </div>
+          {profilePicture ? (
+            <img
+              src={profilePicture}
+              alt={username}
+              className={`rounded-full object-cover border-2 border-[rgb(var(--ss-accent-rgb)/0.35)]
+              ${isSmall ? "h-10 w-10" : "h-16 w-16"}`}
+              draggable={false}
+            />
+          ) : (
+            <div
+              className={`rounded-full bg-[rgb(var(--ss-accent-rgb)/0.2)] border-2 border-[rgb(var(--ss-accent-rgb)/0.35)] flex items-center justify-center font-bold text-white
+              ${isSmall ? "h-10 w-10 text-base" : "h-16 w-16 text-xl"}`}
+            >
+              {initial}
+            </div>
+          )}
           {!isSmall && (
             <span className="text-sm text-slate-400">{isLocal ? "You" : username}</span>
           )}
@@ -141,7 +170,24 @@ export default function VideoTile({
         </span>
       </div>
 
-      {/* Expand button (top-right, visible on hover) — enters app fullscreen, not OS fullscreen */}
+      {/* Theater mode button for screenshares (top-right, before expand) */}
+      {isScreenShare && onTheater && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onTheater();
+          }}
+          className="absolute top-1.5 right-10 opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center justify-center h-7 w-7 rounded-lg bg-black/50 hover:bg-black/70 text-white/80 backdrop-blur-sm"
+          title="Theater Mode"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="M2 8h20" />
+          </svg>
+        </button>
+      )}
+
+      {/* Expand button (top-right, visible on hover) -- enters app fullscreen, not OS fullscreen */}
       {onExpand && (
         <button
           onClick={(e) => {

@@ -29,6 +29,8 @@ export default class WebRTCManager {
     this.pendingCandidates = new Map(); // userId -> ICECandidate[]
     this.reconnectTimers = new Map();
     this.makingOffer = new Map(); // userId -> boolean (for perfect negotiation)
+    this.screenAudioSenders = new Map(); // userId -> RTCRtpSender (for screen share audio cleanup)
+    this._screenAudioMixer = null; // { ctx, mixedTrack, originalMicTrack } when mixing screen+mic audio
 
     this.onRemoteStream = onRemoteStream;
     this.onRemoteStreamRemoved = onRemoteStreamRemoved;
@@ -121,11 +123,13 @@ export default class WebRTCManager {
       });
     }
 
-    // If screen sharing, also add the screen track
+    // If screen sharing, add only the screen VIDEO track (not audio).
+    // Screen audio is mixed into the mic track via Web Audio API.
     if (this.screenStream) {
-      this.screenStream.getTracks().forEach((track) => {
-        pc.addTrack(track, this.screenStream);
-      });
+      const screenVideoTrack = this.screenStream.getVideoTracks()[0];
+      if (screenVideoTrack) {
+        pc.addTrack(screenVideoTrack, this.screenStream);
+      }
     }
 
     // Always ensure a video transceiver exists (even for voice-only calls).
@@ -134,6 +138,14 @@ export default class WebRTCManager {
     const hasVideoSender = pc.getSenders().some((s) => s.track?.kind === "video");
     if (!hasVideoSender) {
       pc.addTransceiver("video", { direction: "sendrecv" });
+    }
+
+    // If screen audio is currently being mixed, use the mixed track on this connection
+    if (this._screenAudioMixer?.mixedTrack) {
+      const audioSender = pc.getSenders().find((s) => s.track?.kind === "audio");
+      if (audioSender) {
+        audioSender.replaceTrack(this._screenAudioMixer.mixedTrack).catch(() => {});
+      }
     }
 
     // Renegotiation handler — handles addTrack during active call (screen share in voice-only)
@@ -440,6 +452,80 @@ export default class WebRTCManager {
     }
   }
 
+  // --- Camera flip (toggle between front and rear cameras) ---
+
+  async flipCamera() {
+    if (!this.localStream) return null;
+
+    try {
+      const currentTrack = this.localStream.getVideoTracks()[0];
+      const currentFacing = currentTrack?.getSettings?.()?.facingMode || "user";
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+      // On mobile: simply toggle between "user" (front) and "environment" (main rear)
+      // This avoids cycling through ultrawide, telephoto, etc.
+      if (isMobile) {
+        const nextFacing = currentFacing === "user" ? "environment" : "user";
+
+        // Stop current video track
+        if (currentTrack) {
+          currentTrack.stop();
+          this.localStream.removeTrack(currentTrack);
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { exact: nextFacing }, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 24 } },
+        });
+        const newTrack = stream.getVideoTracks()[0];
+        this.localStream.addTrack(newTrack);
+
+        for (const [, { pc }] of this.peers) {
+          const senders = pc.getSenders();
+          const videoSender = senders.find((s) => s.track === null || s.track?.kind === "video");
+          if (videoSender) {
+            await videoSender.replaceTrack(newTrack);
+          }
+        }
+
+        return newTrack;
+      }
+
+      // On desktop: cycle through all video input devices
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter((d) => d.kind === "videoinput");
+      if (videoDevices.length < 2) return null;
+
+      const currentDeviceId = currentTrack?.getSettings?.()?.deviceId || "";
+      const currentIdx = videoDevices.findIndex((d) => d.deviceId === currentDeviceId);
+      const nextIdx = (currentIdx + 1) % videoDevices.length;
+      const nextDeviceId = videoDevices[nextIdx].deviceId;
+
+      if (currentTrack) {
+        currentTrack.stop();
+        this.localStream.removeTrack(currentTrack);
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: nextDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      });
+      const newTrack = stream.getVideoTracks()[0];
+      this.localStream.addTrack(newTrack);
+
+      for (const [, { pc }] of this.peers) {
+        const senders = pc.getSenders();
+        const videoSender = senders.find((s) => s.track === null || s.track?.kind === "video");
+        if (videoSender) {
+          await videoSender.replaceTrack(newTrack);
+        }
+      }
+
+      return newTrack;
+    } catch (err) {
+      console.error("Camera flip failed:", err);
+      return null;
+    }
+  }
+
   // --- Screen sharing ---
 
   async startScreenShare(settings) {
@@ -462,13 +548,14 @@ export default class WebRTCManager {
           height: { ideal: resHeight, max: 2160 },
           frameRate: { ideal: fps, max: Math.max(fps, 60) },
         },
-        audio: false,
+        audio: true,
       };
 
       this.screenStream = await navigator.mediaDevices.getDisplayMedia(constraints);
       const screenTrack = this.screenStream.getVideoTracks()[0];
+      const screenAudioTrack = this.screenStream.getAudioTracks()[0];
 
-      // Re-enable audio track if getDisplayMedia disrupted it
+      // Immediately re-enable mic if getDisplayMedia disrupted it
       if (audioTrack && audioWasEnabled && !audioTrack.enabled) {
         audioTrack.enabled = true;
       }
@@ -482,6 +569,40 @@ export default class WebRTCManager {
           || senders.find((s) => s.track === null);
         if (videoSender) {
           await videoSender.replaceTrack(screenTrack);
+        }
+      }
+
+      // If screen has audio, mix it with mic audio via Web Audio API.
+      // This uses replaceTrack() instead of addTrack() to avoid renegotiation
+      // which would break the video stream and cause mic issues.
+      if (screenAudioTrack && audioTrack) {
+        try {
+          const mixCtx = new (window.AudioContext || window.webkitAudioContext)();
+          if (mixCtx.state === "suspended") {
+            await mixCtx.resume().catch(() => {});
+          }
+
+          const micSource = mixCtx.createMediaStreamSource(new MediaStream([audioTrack]));
+          const screenSource = mixCtx.createMediaStreamSource(new MediaStream([screenAudioTrack]));
+          const dest = mixCtx.createMediaStreamDestination();
+
+          micSource.connect(dest);
+          screenSource.connect(dest);
+
+          const mixedTrack = dest.stream.getAudioTracks()[0];
+
+          // Replace audio sender on all peers with the mixed track (no renegotiation)
+          for (const [, { pc }] of this.peers) {
+            const audioSender = pc.getSenders().find((s) => s.track?.kind === "audio");
+            if (audioSender) {
+              await audioSender.replaceTrack(mixedTrack);
+            }
+          }
+
+          this._screenAudioMixer = { ctx: mixCtx, mixedTrack, originalMicTrack: audioTrack };
+        } catch (mixErr) {
+          // If mixing fails, screenshare still works without audio
+          console.warn("Screen audio mixing failed:", mixErr);
         }
       }
 
@@ -510,6 +631,21 @@ export default class WebRTCManager {
   stopScreenShare() {
     if (!this.screenStream) return;
     this.screenStream.getTracks().forEach((t) => t.stop());
+
+    // Restore original mic audio track if we were mixing screen audio
+    if (this._screenAudioMixer) {
+      const { ctx, originalMicTrack } = this._screenAudioMixer;
+
+      for (const [, { pc }] of this.peers) {
+        const audioSender = pc.getSenders().find((s) => s.track?.kind === "audio");
+        if (audioSender) {
+          audioSender.replaceTrack(originalMicTrack).catch(() => {});
+        }
+      }
+
+      ctx.close().catch(() => {});
+      this._screenAudioMixer = null;
+    }
 
     // Restore camera track for peers that had their video sender replaced
     const cameraTrack = this.localStream?.getVideoTracks()[0];
@@ -585,6 +721,11 @@ export default class WebRTCManager {
       this.screenStream.getTracks().forEach((t) => t.stop());
       this.screenStream = null;
     }
+    if (this._screenAudioMixer) {
+      this._screenAudioMixer.ctx.close().catch(() => {});
+      this._screenAudioMixer = null;
+    }
+    this.screenAudioSenders.clear();
     for (const timer of this.reconnectTimers.values()) {
       clearTimeout(timer);
     }

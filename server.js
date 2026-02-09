@@ -248,6 +248,14 @@ if (!fs.existsSync(UPLOAD_DIR)) {
     console.error("Failed to create start uploads dir:", err);
   }
 }
+const AVATAR_DIR = path.join(UPLOAD_DIR, "avatars");
+if (!fs.existsSync(AVATAR_DIR)) {
+  try {
+    fs.mkdirSync(AVATAR_DIR, { recursive: true });
+  } catch (err) {
+    console.error("Failed to create avatars dir:", err);
+  }
+}
 
 // Storage config
 const storage = multer.diskStorage({

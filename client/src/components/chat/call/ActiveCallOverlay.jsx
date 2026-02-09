@@ -4,11 +4,13 @@
 // - Double-click or hover-button for app fullscreen (not OS fullscreen)
 // - Supports multiple simultaneous screen shares
 // - Desktop screenshare resolution/FPS picker
-// - Always-rendered hidden audio elements for remote streams
+// - Per-user volume control via Web Audio API GainNode
+// - Theater mode for screenshares (fills entire window, auto-hiding controls)
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import CallControls from "./CallControls";
 import VideoTile from "./VideoTile";
+import VolumeControlPopup from "./VolumeControlPopup";
 
 function formatDuration(ms) {
   const totalSec = Math.floor(ms / 1000);
@@ -19,33 +21,62 @@ function formatDuration(ms) {
   return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
-// Always-rendered audio elements for remote streams
-function HiddenAudioRenderer({ remoteStreams }) {
-  return (
-    <div style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", pointerEvents: "none" }}>
-      {Object.entries(remoteStreams).map(([userId, stream]) => (
-        <HiddenAudio key={userId} stream={stream} />
-      ))}
-    </div>
-  );
-}
+const VOLUMES_STORAGE_KEY = "ss_user_call_volumes";
 
-function HiddenAudio({ stream }) {
-  const ref = useRef(null);
+// Per-user audio playback via Web Audio API GainNode
+function HiddenAudio({ stream, volume = 1.0 }) {
+  const audioCtxRef = useRef(null);
+  const gainRef = useRef(null);
+  const sourceRef = useRef(null);
+
   useEffect(() => {
-    const el = ref.current;
-    if (el && stream) {
-      el.srcObject = stream;
-      el.play().catch(() => {});
+    if (!stream) return;
+    // Only connect audio tracks
+    const audioTracks = stream.getAudioTracks();
+    if (audioTracks.length === 0) return;
+
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") {
+      audioCtx.resume().catch(() => {});
     }
+    const source = audioCtx.createMediaStreamSource(stream);
+    const gain = audioCtx.createGain();
+    gain.gain.value = volume;
+    source.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    audioCtxRef.current = audioCtx;
+    gainRef.current = gain;
+    sourceRef.current = source;
+
     return () => {
-      if (el) {
-        el.pause();
-        el.srcObject = null;
-      }
+      try { source.disconnect(); } catch (_) {}
+      try { gain.disconnect(); } catch (_) {}
+      audioCtx.close().catch(() => {});
+      audioCtxRef.current = null;
+      gainRef.current = null;
+      sourceRef.current = null;
     };
   }, [stream]);
-  return <audio ref={ref} autoPlay playsInline />;
+
+  // Update gain when volume prop changes
+  useEffect(() => {
+    if (gainRef.current) {
+      gainRef.current.gain.value = volume;
+    }
+  }, [volume]);
+
+  return null;
+}
+
+function HiddenAudioRenderer({ remoteStreams, userVolumes }) {
+  return (
+    <>
+      {Object.entries(remoteStreams).map(([userId, stream]) => (
+        <HiddenAudio key={userId} stream={stream} volume={userVolumes?.[userId] ?? 1.0} />
+      ))}
+    </>
+  );
 }
 
 // Screen share resolution/FPS picker for desktop
@@ -146,15 +177,39 @@ export default function ActiveCallOverlay({
   streamUpdateTick,
   onToggleMute,
   onToggleVideo,
+  onFlipCamera,
   onToggleScreenShare,
   onLeaveCall,
   allUsers,
   conversationLabel,
+  hasMultipleCameras,
 }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [focusedTileId, setFocusedTileId] = useState(null);
   const [showScreenSharePicker, setShowScreenSharePicker] = useState(false);
+
+  // Theater mode state
+  const [theaterMode, setTheaterMode] = useState(false);
+  const [theaterControlsVisible, setTheaterControlsVisible] = useState(true);
+  const theaterTimeoutRef = useRef(null);
+  const theaterVideoRef = useRef(null);
+
+  // Per-user volume control
+  const [userVolumes, setUserVolumes] = useState(() => {
+    try {
+      const raw = localStorage.getItem(VOLUMES_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+
+  // Volume control popup
+  const [volumePopup, setVolumePopup] = useState(null); // { x, y, userId, username, profilePicture }
+
+  // Persist volumes
+  useEffect(() => {
+    try { localStorage.setItem(VOLUMES_STORAGE_KEY, JSON.stringify(userVolumes)); } catch {}
+  }, [userVolumes]);
 
   useEffect(() => {
     if (!callState?.startedAt) return;
@@ -173,6 +228,11 @@ export default function ActiveCallOverlay({
     return u?.username || "User";
   };
 
+  const getUserPic = (uid) => {
+    const u = allUsers?.find((x) => x.id === uid);
+    return u?.profilePictureThumbnail || u?.profilePicture || null;
+  };
+
   const remoteUserIds = Object.keys(remoteStreams);
   const isLocalScreenSharing = callState.isScreenSharing;
 
@@ -180,6 +240,8 @@ export default function ActiveCallOverlay({
   const tiles = [];
 
   // Local camera tile
+  const currentUserPic = allUsers?.find(x => x.id === callState.userId)?.profilePictureThumbnail ||
+                          allUsers?.find(x => x.id === callState.userId)?.profilePicture || null;
   tiles.push({
     id: "local",
     stream: localStream,
@@ -188,6 +250,7 @@ export default function ActiveCallOverlay({
     isVideoOff: !callState.localVideoEnabled,
     isScreenShare: false,
     isLocal: true,
+    profilePicture: currentUserPic,
   });
 
   // Local screen share tile
@@ -200,6 +263,7 @@ export default function ActiveCallOverlay({
       isVideoOff: false,
       isScreenShare: true,
       isLocal: true,
+      profilePicture: null,
     });
   }
 
@@ -216,6 +280,7 @@ export default function ActiveCallOverlay({
       isVideoOff: !isRemoteScreenShare && ms && !ms.video,
       isScreenShare: isRemoteScreenShare,
       isLocal: false,
+      profilePicture: isRemoteScreenShare ? null : getUserPic(uid),
     });
   }
 
@@ -233,10 +298,11 @@ export default function ActiveCallOverlay({
     prevScreenSharesRef.current = screenShareTileIds;
   }, [screenShareTileIds.join(",")]);
 
-  // Clear focus if the focused tile no longer exists
+  // Clear focus if the focused tile no longer exists; also exit theater
   useEffect(() => {
     if (focusedTileId && !tiles.some((t) => t.id === focusedTileId)) {
       setFocusedTileId(null);
+      setTheaterMode(false);
     }
   }, [focusedTileId, tiles.length]);
 
@@ -249,6 +315,56 @@ export default function ActiveCallOverlay({
     setFocusedTileId(tileId);
     setFullscreen(true);
   }, []);
+
+  // Theater mode: for screenshares, fills entire window
+  const handleTheater = useCallback((tileId) => {
+    setFocusedTileId(tileId);
+    setTheaterMode(true);
+    setTheaterControlsVisible(true);
+    // Start auto-hide timer
+    if (theaterTimeoutRef.current) clearTimeout(theaterTimeoutRef.current);
+    theaterTimeoutRef.current = setTimeout(() => setTheaterControlsVisible(false), 3000);
+  }, []);
+
+  const handleTheaterMouseMove = useCallback(() => {
+    setTheaterControlsVisible(true);
+    if (theaterTimeoutRef.current) clearTimeout(theaterTimeoutRef.current);
+    theaterTimeoutRef.current = setTimeout(() => setTheaterControlsVisible(false), 3000);
+  }, []);
+
+  // Cleanup theater timeout
+  useEffect(() => {
+    return () => {
+      if (theaterTimeoutRef.current) clearTimeout(theaterTimeoutRef.current);
+    };
+  }, []);
+
+  // Escape key exits theater mode
+  useEffect(() => {
+    if (!theaterMode) return;
+    const handleKey = (e) => {
+      if (e.key === "Escape") {
+        setTheaterMode(false);
+        if (theaterTimeoutRef.current) clearTimeout(theaterTimeoutRef.current);
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [theaterMode]);
+
+  // Attach theater video stream
+  useEffect(() => {
+    const el = theaterVideoRef.current;
+    if (!el || !theaterMode) return;
+    const theaterTile = tiles.find(t => t.id === focusedTileId);
+    if (theaterTile?.stream) {
+      el.srcObject = theaterTile.stream;
+      el.play().catch(() => {});
+    }
+    return () => {
+      if (el) el.srcObject = null;
+    };
+  }, [theaterMode, focusedTileId, tiles, streamUpdateTick]);
 
   // Screen share handler: show picker on desktop, start directly on mobile
   const handleScreenShareClick = useCallback(() => {
@@ -268,6 +384,15 @@ export default function ActiveCallOverlay({
     onToggleScreenShare(settings);
   }, [onToggleScreenShare]);
 
+  // Volume control handlers
+  const handleVolumeControl = useCallback((tileId, username, profilePicture, x, y) => {
+    setVolumePopup({ x, y, userId: tileId, username, profilePicture });
+  }, []);
+
+  const handleVolumeChange = useCallback((userId, volume) => {
+    setUserVolumes(prev => ({ ...prev, [userId]: volume }));
+  }, []);
+
   // Grid class for video tiles
   const getGridClass = (count) => {
     if (count <= 1) return "grid-cols-1";
@@ -275,11 +400,31 @@ export default function ActiveCallOverlay({
     return "grid-cols-3";
   };
 
+  // Helper to render tile props
+  const tileProps = (tile, isSmall, isFocused, inFullscreen) => ({
+    stream: tile.stream,
+    userId: tile.id,
+    username: tile.username,
+    isMuted: tile.isMuted,
+    isVideoOff: tile.isVideoOff,
+    isScreenShare: tile.isScreenShare,
+    isLocal: tile.isLocal,
+    isSmall,
+    isFocused,
+    streamUpdateTick,
+    profilePicture: tile.profilePicture,
+    onFocus: () => handleFocus(tile.id),
+    onExpand: !inFullscreen ? () => handleExpand(tile.id) : undefined,
+    onTheater: tile.isScreenShare ? () => handleTheater(tile.id) : undefined,
+    onVolumeControl: tile.isLocal ? undefined : (x, y) =>
+      handleVolumeControl(tile.id, tile.username, tile.profilePicture, x, y),
+  });
+
   // --- Outgoing call state ---
   if (callState.status === "outgoing") {
     return (
       <>
-        <HiddenAudioRenderer remoteStreams={remoteStreams} />
+        <HiddenAudioRenderer remoteStreams={remoteStreams} userVolumes={userVolumes} />
         <div className="shrink-0 flex items-center justify-between px-4 py-2 border-b border-white/8 bg-[rgb(var(--ss-accent-rgb)/0.08)]">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="h-2 w-2 rounded-full bg-[rgb(var(--ss-accent-rgb))] animate-pulse shrink-0" />
@@ -313,39 +458,12 @@ export default function ActiveCallOverlay({
       return (
         <div className={`flex flex-col gap-2 ${heightClass}`}>
           <div className="flex-1 min-h-0">
-            <VideoTile
-              stream={focusedTile.stream}
-              userId={focusedTile.id}
-              username={focusedTile.username}
-              isMuted={focusedTile.isMuted}
-              isVideoOff={focusedTile.isVideoOff}
-              isScreenShare={focusedTile.isScreenShare}
-              isLocal={focusedTile.isLocal}
-              isSmall={false}
-              isFocused={true}
-              streamUpdateTick={streamUpdateTick}
-              onFocus={() => handleFocus(focusedTile.id)}
-              onExpand={!inFullscreen ? () => handleExpand(focusedTile.id) : undefined}
-            />
+            <VideoTile {...tileProps(focusedTile, false, true, inFullscreen)} />
           </div>
           {otherTiles.length > 0 && (
             <div className="shrink-0 flex gap-2 overflow-x-auto py-1">
               {otherTiles.map((tile) => (
-                <VideoTile
-                  key={tile.id}
-                  stream={tile.stream}
-                  userId={tile.id}
-                  username={tile.username}
-                  isMuted={tile.isMuted}
-                  isVideoOff={tile.isVideoOff}
-                  isScreenShare={tile.isScreenShare}
-                  isLocal={tile.isLocal}
-                  isSmall={true}
-                  isFocused={false}
-                  streamUpdateTick={streamUpdateTick}
-                  onFocus={() => handleFocus(tile.id)}
-                  onExpand={!inFullscreen ? () => handleExpand(tile.id) : undefined}
-                />
+                <VideoTile key={tile.id} {...tileProps(tile, true, false, inFullscreen)} />
               ))}
             </div>
           )}
@@ -357,31 +475,121 @@ export default function ActiveCallOverlay({
     return (
       <div className={`grid ${getGridClass(tiles.length)} gap-2 ${heightClass}`}>
         {tiles.map((tile) => (
-          <VideoTile
-            key={tile.id}
-            stream={tile.stream}
-            userId={tile.id}
-            username={tile.username}
-            isMuted={tile.isMuted}
-            isVideoOff={tile.isVideoOff}
-            isScreenShare={tile.isScreenShare}
-            isLocal={tile.isLocal}
-            isSmall={false}
-            isFocused={false}
-            streamUpdateTick={streamUpdateTick}
-            onFocus={() => handleFocus(tile.id)}
-            onExpand={!inFullscreen ? () => handleExpand(tile.id) : undefined}
-          />
+          <VideoTile key={tile.id} {...tileProps(tile, false, false, inFullscreen)} />
         ))}
       </div>
     );
   };
 
+  // Shared call controls props
+  const controlsProps = {
+    localAudioEnabled: callState.localAudioEnabled,
+    localVideoEnabled: callState.localVideoEnabled,
+    isScreenSharing: callState.isScreenSharing,
+    isExpanded: true,
+    onToggleMute,
+    onToggleVideo,
+    onFlipCamera,
+    onToggleScreenShare: handleScreenShareClick,
+    onLeaveCall,
+    hasMultipleCameras,
+  };
+
+  // --- Theater mode (screenshare fills entire window) ---
+  if (theaterMode && focusedTileId) {
+    const theaterTile = tiles.find(t => t.id === focusedTileId);
+    if (!theaterTile) {
+      setTheaterMode(false);
+    } else {
+      return (
+        <>
+          <HiddenAudioRenderer remoteStreams={remoteStreams} userVolumes={userVolumes} />
+          <div
+            className="fixed inset-0 z-[56] bg-black flex flex-col"
+            onMouseMove={handleTheaterMouseMove}
+            onTouchStart={handleTheaterMouseMove}
+            style={{ cursor: theaterControlsVisible ? "default" : "none" }}
+          >
+            {/* Screenshare fills entire viewport */}
+            <div className="flex-1 min-h-0 relative">
+              <video
+                ref={theaterVideoRef}
+                autoPlay
+                playsInline
+                muted
+                className="absolute inset-0 h-full w-full object-contain bg-black"
+              />
+            </div>
+
+            {/* Auto-hiding controls overlay */}
+            <div className={`absolute bottom-0 left-0 right-0 transition-all duration-300 ${
+              theaterControlsVisible
+                ? "opacity-100 translate-y-0"
+                : "opacity-0 translate-y-4 pointer-events-none"
+            }`}>
+              <div className="bg-gradient-to-t from-black/90 to-transparent pt-16 pb-4 px-4">
+                {/* Info bar */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+                    <span className="text-sm text-white/80">{theaterTile.username}</span>
+                    <span className="text-xs text-slate-500 font-mono">{formatDuration(elapsed)}</span>
+                    <span className="text-xs text-slate-500">{participantCount}p</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setTheaterMode(false);
+                      if (theaterTimeoutRef.current) clearTimeout(theaterTimeoutRef.current);
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-all"
+                  >
+                    Exit Theater
+                  </button>
+                </div>
+                {/* Call controls */}
+                <div className="relative">
+                  {showScreenSharePicker && (
+                    <ScreenSharePicker
+                      onStart={handleScreenShareStart}
+                      onCancel={() => setShowScreenSharePicker(false)}
+                    />
+                  )}
+                  <CallControls
+                    {...controlsProps}
+                    onToggleExpand={() => {
+                      setTheaterMode(false);
+                      if (theaterTimeoutRef.current) clearTimeout(theaterTimeoutRef.current);
+                    }}
+                    isFullscreen={true}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Volume popup */}
+          {volumePopup && (
+            <VolumeControlPopup
+              x={volumePopup.x}
+              y={volumePopup.y}
+              userId={volumePopup.userId}
+              username={volumePopup.username}
+              profilePicture={volumePopup.profilePicture}
+              volume={userVolumes[volumePopup.userId] ?? 1.0}
+              onVolumeChange={(v) => handleVolumeChange(volumePopup.userId, v)}
+              onClose={() => setVolumePopup(null)}
+            />
+          )}
+        </>
+      );
+    }
+  }
+
   // --- Fullscreen overlay (within app, not OS fullscreen) ---
   if (fullscreen) {
     return (
       <>
-        <HiddenAudioRenderer remoteStreams={remoteStreams} />
+        <HiddenAudioRenderer remoteStreams={remoteStreams} userVolumes={userVolumes} />
         <div className="fixed inset-0 z-[54] bg-[#060a14]/98 flex flex-col">
           {/* Header */}
           <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-white/8">
@@ -421,19 +629,26 @@ export default function ActiveCallOverlay({
               />
             )}
             <CallControls
-              localAudioEnabled={callState.localAudioEnabled}
-              localVideoEnabled={callState.localVideoEnabled}
-              isScreenSharing={callState.isScreenSharing}
-              isExpanded={true}
-              onToggleMute={onToggleMute}
-              onToggleVideo={onToggleVideo}
-              onToggleScreenShare={handleScreenShareClick}
+              {...controlsProps}
               onToggleExpand={() => setFullscreen(false)}
-              onLeaveCall={onLeaveCall}
               isFullscreen={true}
             />
           </div>
         </div>
+
+        {/* Volume popup */}
+        {volumePopup && (
+          <VolumeControlPopup
+            x={volumePopup.x}
+            y={volumePopup.y}
+            userId={volumePopup.userId}
+            username={volumePopup.username}
+            profilePicture={volumePopup.profilePicture}
+            volume={userVolumes[volumePopup.userId] ?? 1.0}
+            onVolumeChange={(v) => handleVolumeChange(volumePopup.userId, v)}
+            onClose={() => setVolumePopup(null)}
+          />
+        )}
       </>
     );
   }
@@ -441,7 +656,7 @@ export default function ActiveCallOverlay({
   // --- Active call: always-visible inline panel ---
   return (
     <>
-      <HiddenAudioRenderer remoteStreams={remoteStreams} />
+      <HiddenAudioRenderer remoteStreams={remoteStreams} userVolumes={userVolumes} />
 
       {callState.status === "active" && (
         <div className="shrink-0 border-b border-white/8 bg-[#060a14]/95 backdrop-blur-xl">
@@ -509,7 +724,7 @@ export default function ActiveCallOverlay({
             </div>
           </div>
 
-          {/* Video grid — always visible */}
+          {/* Video grid -- always visible */}
           <div className="p-3" style={{ height: "28vh", minHeight: "160px" }}>
             {renderVideoGrid("h-full", false)}
           </div>
@@ -523,18 +738,25 @@ export default function ActiveCallOverlay({
               />
             )}
             <CallControls
-              localAudioEnabled={callState.localAudioEnabled}
-              localVideoEnabled={callState.localVideoEnabled}
-              isScreenSharing={callState.isScreenSharing}
-              isExpanded={true}
-              onToggleMute={onToggleMute}
-              onToggleVideo={onToggleVideo}
-              onToggleScreenShare={handleScreenShareClick}
+              {...controlsProps}
               onToggleExpand={() => setFullscreen(true)}
-              onLeaveCall={onLeaveCall}
             />
           </div>
         </div>
+      )}
+
+      {/* Volume popup */}
+      {volumePopup && (
+        <VolumeControlPopup
+          x={volumePopup.x}
+          y={volumePopup.y}
+          userId={volumePopup.userId}
+          username={volumePopup.username}
+          profilePicture={volumePopup.profilePicture}
+          volume={userVolumes[volumePopup.userId] ?? 1.0}
+          onVolumeChange={(v) => handleVolumeChange(volumePopup.userId, v)}
+          onClose={() => setVolumePopup(null)}
+        />
       )}
     </>
   );
