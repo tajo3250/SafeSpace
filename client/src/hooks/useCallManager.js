@@ -135,6 +135,7 @@ export function useCallManager(socket, currentUser) {
         socket.emit("call:initiate", { conversationId, type });
       } catch (err) {
         console.error("Failed to start call:", err);
+        alert(`Failed to start call: ${err.message || "Unknown error occurred"}`);
         cleanupCall();
       }
     },
@@ -182,6 +183,7 @@ export function useCallManager(socket, currentUser) {
       socket.emit("call:join", { conversationId });
     } catch (err) {
       console.error("Failed to accept call:", err);
+      alert(`Failed to accept call: ${err.message || "Unknown error occurred"}`);
       cleanupCall();
     }
   }, [incomingCall, socket, currentUser, audioInputDeviceId, videoInputDeviceId, handleRemoteStream, handleRemoteStreamRemoved, handleConnectionStateChange, handleRemoteTrackUpdated, cleanupCall]);
